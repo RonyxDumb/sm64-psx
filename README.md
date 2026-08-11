@@ -1,11 +1,9 @@
-> # Migrated to https://codeberg.org/malucart/sm64-psx! Go there instead!
-
-# Super Mario 64 (DualShock Version)
+# Super Mario 64 (PS1 Port)
 
 - This is a fork of [the full decompilation of Super Mario 64 (J), (U), (E), and (SH)](https://github.com/n64decomp/sm64).
-- It is heavily modified and can no longer target Nintendo 64, only PSX and PC (for debugging).
+- It is heavily modified and can no longer target Nintendo 64, only PSX.
 - There are still many limitations.
-- For now, it can only build from the US version.
+- It can only build from the US version.
 
 This repo does not include all assets necessary for compiling the game.
 An original copy of the game is required to extract the assets.
