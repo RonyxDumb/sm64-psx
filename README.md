@@ -1,5 +1,4 @@
-# Super Mario 64 (PS1 Port) 🇮🇹
-
+# Super Mario 64 (PS1 Port)
 Questo repository è un fork del progetto di [de-compilazione completa di Super Mario 64](https://github.com/n64decomp/sm64). È stato fortemente modificato per rimuovere il target Nintendo 64 e mirare esclusivamente all'hardware di **Sony PlayStation (PSX / PS1)**.
 
 ---
