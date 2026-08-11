@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<iso_project image_name="sm64.iso" cue_sheet="sm64.cue" no_xa="0">
+	<track type="data">
+		<identifiers
+			system = "PLAYSTATION"
+			application = "PLAYSTATION"
+			volume = "SM64"
+			volume_set = "SM64"
+			publisher = "SM64"
+			data_preparer = "MKPSXISO"
+		/>
+		<!--license file="../../LICENSEA.DAT"/-->
+		<directory_tree>
+			<file name="SYSTEM.CNF" type="data" source="../../system.cnf"/>
+			<file name="SM64.EXE" type="data" source="sm64.exe"/>
+			<file name="EXT.DAT" type="data" source="ext_files.dat"/>
+			<file name="BGMINFO.DAT" type="data" source="bgm/info.dat"/>
+			<file name="BGMPACK.XA" type="xa" source="bgm/pack.xa"/>
+			<dummy sectors="1024"/>
+		</directory_tree>
+	</track>
+</iso_project>

@@ -1,0 +1,49 @@
+CompileFlags:
+ Add:
+  - -std=gnu2y
+---
+If:
+ PathExclude: [.*tools/.*]
+CompileFlags:
+ Add:
+  - -Ibuild/us_psx
+  - -Ibuild/us_psx/include
+  - -Ips1-bare-metal
+  - -Ips1-bare-metal/libc
+  - -I./include
+  - -I./include/libc
+  - -Isrc
+  - -Itools/audiofile
+  - -I.
+  - -DNON_MATCHING=1
+  - -DNO_AUDIO
+  - -DIDE
+  - -DF3D_OLD=1
+  - -DVERSION_US
+  - -DAVOID_UB
+  - -D_LANGUAGE_C
+  - -Dtrue=1
+  - -Dfalse=0
+  - -DENABLE_RUMBLE=1
+  - -DMARIO_HEAD=1
+---
+If:
+ PathExclude: [.*src/port/pc/.*, .*src/port/ss/.*, .*tools/.*]
+CompileFlags:
+ Add:
+  - --target=mipsel-none-elf
+  - -DTARGET_PSX
+---
+If:
+ PathMatch: .*src/port/pc/.*
+CompileFlags:
+ Add:
+  - --target=x86_64-linux-gnu
+  - -DTARGET_PC
+---
+If:
+ PathMatch: .*src/port/ss/.*
+CompileFlags:
+ Add:
+  - --target=sh2-none-elf
+  - -DTARGET_SS

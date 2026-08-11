@@ -1,0 +1,2911 @@
+#include <PR/ultratypes.h>
+
+#include "sm64.h"
+#include "area.h"
+#include "behavior_actions.h"
+#include "behavior_data.h"
+#include "camera.h"
+#include "debug.h"
+#include "dialog_ids.h"
+#include "engine/behavior_script.h"
+#include "engine/geo_layout.h"
+#include "engine/math_util.h"
+#include "engine/surface_collision.h"
+#include "game_init.h"
+#include "helper_macros.h"
+#include "ingame_menu.h"
+#include "interaction.h"
+#include "level_table.h"
+#include "level_update.h"
+#include "mario.h"
+#include "mario_actions_cutscene.h"
+#include "memory.h"
+#include "obj_behaviors.h"
+#include "object_helpers.h"
+#include "object_list_processor.h"
+#include "rendering_graph_node.h"
+#include "spawn_object.h"
+#include "spawn_sound.h"
+#include <port/gfx/gfx.h>
+#include "object_fields.h"
+
+static s8 sBbhStairJiggleOffsets[] = { -8, 8, -4, 4 };
+static s16 sPowersOfTwo[] = { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 };
+static s8 sLevelsWithRooms[] = { LEVEL_BBH, LEVEL_CASTLE, LEVEL_HMC, -1 };
+
+static s32 clear_move_flag(u32 *, s32);
+
+#define o gCurrentObject
+
+Gfx *geo_update_projectile_pos_from_parent(s32 callContext, UNUSED struct GraphNode *node, const ShortMatrix* mtxq) {
+    ShortMatrix sp20q;
+    struct Object *sp1C;
+
+    if (callContext == GEO_CONTEXT_RENDER) {
+        sp1C = (struct Object *) gCurGraphNodeObject; // TODO: change global type to Object pointer
+        if (sp1C->prevObj) {
+            create_transformation_from_matricesq(&sp20q, mtxq, gCurGraphNodeCamera->matrixPtrq);
+            obj_update_pos_from_parent_transformationq(&sp20q, sp1C->prevObj);
+            obj_set_gfx_pos_from_pos(sp1C->prevObj);
+        }
+    }
+    return NULL;
+}
+
+Gfx *geo_update_layer_transparency(s32 callContext, struct GraphNode *node, UNUSED void *context) {
+    Gfx *dlStart, *dlHead;
+    struct Object *objectGraphNode;
+    struct GraphNodeGenerated *currentGraphNode;
+    UNUSED struct GraphNodeGenerated *sp2C;
+    s32 objectOpacity;
+
+    dlStart = NULL;
+
+    if (callContext == GEO_CONTEXT_RENDER) {
+        objectGraphNode = (struct Object *) gCurGraphNodeObject; // TODO: change this to object pointer?
+        currentGraphNode = (struct GraphNodeGenerated *) node;
+        sp2C = (struct GraphNodeGenerated *) node;
+
+        if (gCurGraphNodeHeldObject) {
+            objectGraphNode = gCurGraphNodeHeldObject->objNode;
+        }
+
+        objectOpacity = objectGraphNode->oOpacity;
+        dlStart = alloc_display_list(sizeof(Gfx) * 3);
+
+        dlHead = dlStart;
+
+        if (objectOpacity == 0xFF) {
+            if (currentGraphNode->parameter == 20) {
+                currentGraphNode->fnNode.node.flags =
+                0x600 | (currentGraphNode->fnNode.node.flags & 0xFF);
+            } else {
+                currentGraphNode->fnNode.node.flags =
+                0x100 | (currentGraphNode->fnNode.node.flags & 0xFF);
+            }
+
+            objectGraphNode->oAnimState = 0;
+        } else {
+            if (currentGraphNode->parameter == 20) {
+                currentGraphNode->fnNode.node.flags =
+                0x600 | (currentGraphNode->fnNode.node.flags & 0xFF);
+            } else {
+                currentGraphNode->fnNode.node.flags =
+                0x500 | (currentGraphNode->fnNode.node.flags & 0xFF);
+            }
+
+            objectGraphNode->oAnimState = 1;
+
+#ifdef VERSION_JP
+            if (currentGraphNode->parameter == 10) {
+                if (gDebugInfo[DEBUG_PAGE_ENEMYINFO][3]) {
+                    gDPSetAlphaCompare(dlHead++, G_AC_DITHER);
+                }
+            } else {
+                if (objectGraphNode->activeFlags & ACTIVE_FLAG_DITHERED_ALPHA) {
+                    gDPSetAlphaCompare(dlHead++, G_AC_DITHER);
+                }
+            }
+#else // gDebugInfo accesses were removed in all non-JP versions.
+            if (objectOpacity == 0 && segmented_to_virtual(bhvBowser) == objectGraphNode->behavior) {
+                objectGraphNode->oAnimState = 2;
+            }
+            // the debug info check was removed in US. so we need to
+            // perform the only necessary check instead of the debuginfo
+            // one.
+            if (currentGraphNode->parameter != 10) {
+                if (objectGraphNode->activeFlags & ACTIVE_FLAG_DITHERED_ALPHA) {
+                    gDPSetAlphaCompare(dlHead++, G_AC_DITHER);
+                }
+            }
+#endif
+        }
+
+        gDPSetEnvColor(dlHead++, 255, 255, 255, objectOpacity);
+        gSPEndDisplayList(dlHead);
+    }
+
+    return dlStart;
+}
+
+/**
+ * @bug Every geo function declares the 3 parameters of callContext, node, and
+ * the matrix array. This one (see also geo_switch_area) doesn't. When executed,
+ * the node function executor passes the 3rd argument to a function that doesn't
+ * declare it. This is undefined behavior, but harmless in practice due to the
+ * o32 calling convention.
+ */
+#ifdef AVOID_UB
+Gfx *geo_switch_anim_state(s32 callContext, struct GraphNode *node, UNUSED void *context) {
+#else
+Gfx *geo_switch_anim_state(s32 callContext, struct GraphNode *node) {
+#endif
+    struct Object *obj;
+    struct GraphNodeSwitchCase *switchCase;
+
+    if (callContext == GEO_CONTEXT_RENDER) {
+        obj = (struct Object *) gCurGraphNodeObject; // TODO: change global type to Object pointer
+
+        // move to a local var because GraphNodes are passed in all geo functions.
+        // cast the pointer.
+        switchCase = (struct GraphNodeSwitchCase *) node;
+
+        if (gCurGraphNodeHeldObject != NULL) {
+            obj = gCurGraphNodeHeldObject->objNode;
+        }
+
+        // if the case is greater than the number of cases, set to 0 to avoid overflowing
+        // the switch.
+        if (obj->oAnimState >= switchCase->numCases) {
+            obj->oAnimState = 0;
+        }
+
+        // assign the case number for execution.
+        switchCase->selectedCase = obj->oAnimState;
+    }
+
+    return NULL;
+}
+
+//! @bug Same issue as geo_switch_anim_state.
+#ifdef AVOID_UB
+Gfx *geo_switch_area(s32 callContext, struct GraphNode *node, UNUSED void *context) {
+#else
+Gfx *geo_switch_area(s32 callContext, struct GraphNode *node) {
+#endif
+    s16 sp26;
+    struct Surface *sp20;
+    UNUSED struct Object *sp1C =
+        (struct Object *) gCurGraphNodeObject; // TODO: change global type to Object pointer
+    struct GraphNodeSwitchCase *switchCase = (struct GraphNodeSwitchCase *) node;
+
+    if (callContext == GEO_CONTEXT_RENDER) {
+        if (gMarioObject == NULL) {
+            switchCase->selectedCase = 0;
+        } else {
+            gFindFloorIncludeSurfaceIntangible = TRUE;
+
+            find_floorq(QFIELD(gMarioObject, oPosX), QFIELD(gMarioObject, oPosY), QFIELD(gMarioObject, oPosZ), &sp20);
+
+            if (sp20) {
+                gMarioCurrentRoom = sp20->room;
+                sp26 = sp20->room - 1;
+                print_debug_top_down_objectinfo("areainfo %d", sp20->room);
+
+                if (sp26 >= 0) {
+                    switchCase->selectedCase = sp26;
+                }
+            }
+        }
+    } else {
+        switchCase->selectedCase = 0;
+    }
+
+    return NULL;
+}
+
+void obj_update_pos_from_parent_transformationq(const ShortMatrix* a0, struct Object* a1) {
+	q32 spCq = QFIELD(a1, oParentRelativePosX);
+    q32 sp8q = QFIELD(a1, oParentRelativePosY);
+    q32 sp4q = QFIELD(a1, oParentRelativePosZ);
+
+    QSETFIELD(a1, oPosX, qmul(spCq, (q32) a0->m[0][0]) + qmul(sp8q, (q32) a0->m[1][0]) + qmul(sp4q, (q32) a0->m[2][0]) + q(a0->t[0]));
+    QSETFIELD(a1, oPosY, qmul(spCq, (q32) a0->m[0][1]) + qmul(sp8q, (q32) a0->m[1][1]) + qmul(sp4q, (q32) a0->m[2][1]) + q(a0->t[1]));
+    QSETFIELD(a1, oPosZ, qmul(spCq, (q32) a0->m[0][2]) + qmul(sp8q, (q32) a0->m[1][2]) + qmul(sp4q, (q32) a0->m[2][2]) + q(a0->t[2]));
+}
+
+void obj_apply_scale_to_mtxq(struct Object *obj, ShortMatrix* dstq, ShortMatrix* srcq) {
+	for(int i = 0; i < 3; i++) {
+		dstq->m[i][0] = qmul((q32) srcq->m[i][0], obj->header.gfx.scaleq[i]);
+		dstq->m[i][1] = qmul((q32) srcq->m[i][1], obj->header.gfx.scaleq[i]);
+		dstq->m[i][2] = qmul((q32) srcq->m[i][2], obj->header.gfx.scaleq[i]);
+		dstq->t[i] = srcq->t[i];
+	}
+}
+
+void create_transformation_from_matricesq(ShortMatrix* a0, const ShortMatrix* a1, const ShortMatrix* a2) {
+    q32 spCq = (q32) a2->t[0] * (q32) a2->m[0][0] + (q32) a2->t[1] * (q32) a2->m[0][1] + (q32) a2->t[2] * (q32) a2->m[0][2];
+    q32 sp8q = (q32) a2->t[0] * (q32) a2->m[1][0] + (q32) a2->t[1] * (q32) a2->m[1][1] + (q32) a2->t[2] * (q32) a2->m[1][2];
+    q32 sp4q = (q32) a2->t[0] * (q32) a2->m[2][0] + (q32) a2->t[1] * (q32) a2->m[2][1] + (q32) a2->t[2] * (q32) a2->m[2][2];
+
+    a0->m[0][0] = qmul((q32) a1->m[0][0], (q32) a2->m[0][0]) + qmul((q32) a1->m[0][1], (q32) a2->m[0][1]) + qmul((q32) a1->m[0][2], (q32) a2->m[0][2]);
+    a0->m[0][1] = qmul((q32) a1->m[0][0], (q32) a2->m[1][0]) + qmul((q32) a1->m[0][1], (q32) a2->m[1][1]) + qmul((q32) a1->m[0][2], (q32) a2->m[1][2]);
+    a0->m[0][2] = qmul((q32) a1->m[0][0], (q32) a2->m[2][0]) + qmul((q32) a1->m[0][1], (q32) a2->m[2][1]) + qmul((q32) a1->m[0][2], (q32) a2->m[2][2]);
+
+    a0->m[1][0] = qmul((q32) a1->m[1][0], (q32) a2->m[0][0]) + qmul((q32) a1->m[1][1], (q32) a2->m[0][1]) + qmul((q32) a1->m[1][2], (q32) a2->m[0][2]);
+    a0->m[1][1] = qmul((q32) a1->m[1][0], (q32) a2->m[1][0]) + qmul((q32) a1->m[1][1], (q32) a2->m[1][1]) + qmul((q32) a1->m[1][2], (q32) a2->m[1][2]);
+    a0->m[1][2] = qmul((q32) a1->m[1][0], (q32) a2->m[2][0]) + qmul((q32) a1->m[1][1], (q32) a2->m[2][1]) + qmul((q32) a1->m[1][2], (q32) a2->m[2][2]);
+
+    a0->m[2][0] = qmul((q32) a1->m[2][0], (q32) a2->m[0][0]) + qmul((q32) a1->m[2][1], (q32) a2->m[0][1]) + qmul((q32) a1->m[2][2], (q32) a2->m[0][2]);
+    a0->m[2][1] = qmul((q32) a1->m[2][0], (q32) a2->m[1][0]) + qmul((q32) a1->m[2][1], (q32) a2->m[1][1]) + qmul((q32) a1->m[2][2], (q32) a2->m[1][2]);
+    a0->m[2][2] = qmul((q32) a1->m[2][0], (q32) a2->m[2][0]) + qmul((q32) a1->m[2][1], (q32) a2->m[2][1]) + qmul((q32) a1->m[2][2], (q32) a2->m[2][2]);
+
+    a0->t[0] = qtrunc(a1->t[0] * (q32) a2->m[0][0] + a1->t[1] * (q32) a2->m[0][1] + a1->t[2] * (q32) a2->m[0][2] - spCq);
+    a0->t[1] = qtrunc(a1->t[0] * (q32) a2->m[1][0] + a1->t[1] * (q32) a2->m[1][1] + a1->t[2] * (q32) a2->m[1][2] - sp8q);
+    a0->t[2] = qtrunc(a1->t[0] * (q32) a2->m[2][0] + a1->t[1] * (q32) a2->m[2][1] + a1->t[2] * (q32) a2->m[2][2] - sp4q);
+}
+
+void obj_set_held_state(struct Object *obj, const BehaviorScript *heldBehavior) {
+    obj->parentObj = o;
+
+    if (obj->oFlags & OBJ_FLAG_HOLDABLE) {
+        if (heldBehavior == bhvCarrySomething3) {
+            obj->oHeldState = HELD_HELD;
+        }
+
+        if (heldBehavior == bhvCarrySomething5) {
+            obj->oHeldState = HELD_THROWN;
+        }
+
+        if (heldBehavior == bhvCarrySomething4) {
+            obj->oHeldState = HELD_DROPPED;
+        }
+    } else {
+        obj->curBhvCommand = segmented_to_virtual(heldBehavior);
+        obj->bhvStackIndex = 0;
+    }
+}
+
+q32 lateral_dist_between_objectsq(struct Object *obj1, struct Object *obj2) {
+    s32 dxi = IFIELD(obj1, oPosX) - IFIELD(obj2, oPosX);
+    s32 dzi = IFIELD(obj1, oPosZ) - IFIELD(obj2, oPosZ);
+
+    return q(sqrtu(dxi * dxi + dzi * dzi));
+}
+
+q32 dist_between_objectsq(struct Object *obj1, struct Object *obj2) {
+	// divide and multiply it later to avoid overflow. is this the best approach? idk
+    s32 dxi = IFIELD(obj1, oPosX) - IFIELD(obj2, oPosX);
+    s32 dyi = IFIELD(obj1, oPosY) - IFIELD(obj2, oPosY);
+    s32 dzi = IFIELD(obj1, oPosZ) - IFIELD(obj2, oPosZ);
+
+    return q(sqrtu64((s64) dxi * dxi + (s64) dyi * dyi + (s64) dzi * dzi));
+}
+
+void cur_obj_forward_vel_approach_upward(f32 target, f32 increment) {
+	f32 vel = FFIELD(o, oForwardVel);
+    if (vel >= target) {
+        FSETFIELD(o, oForwardVel, target);
+    } else {
+        FSETFIELD(o, oForwardVel, vel + increment);
+    }
+}
+
+s32 approach_f32_signed(f32 *value, f32 target, f32 increment) {
+    s32 reachedTarget = FALSE;
+
+    *value += increment;
+
+    if (increment >= 0.0f) {
+        if (*value > target) {
+            *value = target;
+            reachedTarget = TRUE;
+        }
+    } else {
+        if (*value < target) {
+            *value = target;
+            reachedTarget = TRUE;
+        }
+    }
+
+    return reachedTarget;
+}
+
+s32 approach_q32_signed(q32 *value, q32 target, q32 increment) {
+    s32 reachedTarget = FALSE;
+
+    *value += increment;
+
+    if (increment >= 0) {
+        if (*value > target) {
+            *value = target;
+            reachedTarget = TRUE;
+        }
+    } else {
+        if (*value < target) {
+            *value = target;
+            reachedTarget = TRUE;
+        }
+    }
+
+    return reachedTarget;
+}
+
+f32 approach_f32_symmetric(f32 value, f32 target, f32 increment) {
+    f32 dist;
+
+    if ((dist = target - value) >= 0.0f) {
+        if (dist > increment) {
+            value += increment;
+        } else {
+            value = target;
+        }
+    } else {
+        if (dist < -increment) {
+            value -= increment;
+        } else {
+            value = target;
+        }
+    }
+
+    return value;
+}
+
+s16 approach_s16_symmetric(s16 value, s16 target, s16 increment) {
+    s16 dist = target - value;
+
+    if (dist >= 0) {
+        if (dist > increment) {
+            value += increment;
+        } else {
+            value = target;
+        }
+    } else {
+        if (dist < -increment) {
+            value -= increment;
+        } else {
+            value = target;
+        }
+    }
+
+    return value;
+}
+
+q32 approach_q32_symmetric(q32 valueq, q32 targetq, q32 incrementq) {
+    s16 dist = targetq - valueq;
+
+    if (dist >= 0) {
+        if (dist > incrementq) {
+            valueq += incrementq;
+        } else {
+            valueq = targetq;
+        }
+    } else {
+        if (dist < -incrementq) {
+            valueq -= incrementq;
+        } else {
+            valueq = targetq;
+        }
+    }
+
+    return valueq;
+}
+
+s32 cur_obj_rotate_yaw_toward(s16 target, s16 increment) {
+    s16 startYaw;
+
+    startYaw = (s16) o->oMoveAngleYaw;
+    o->oMoveAngleYaw = approach_s16_symmetric(o->oMoveAngleYaw, target, increment);
+
+    if ((o->oAngleVelYaw = (s16)((s16) o->oMoveAngleYaw - startYaw)) == 0) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+s16 obj_angle_to_object(struct Object *obj1, struct Object *obj2) {
+    q32 z1q, x1q, z2q, x2q;
+    s16 angle;
+
+    z1q = QFIELD(obj1, oPosZ); z2q = QFIELD(obj2, oPosZ); // ordering of instructions..
+    x1q = QFIELD(obj1, oPosX); x2q = QFIELD(obj2, oPosX);
+
+    angle = atan2sq(z2q - z1q, x2q - x1q);
+    return angle;
+}
+
+s16 obj_turn_toward_object(struct Object *obj, struct Object *target, s16 angleIndex, s16 turnAmount) {
+    s16 targetAngle, startAngle;
+
+    switch (angleIndex) {
+        case O_MOVE_ANGLE_PITCH_INDEX:
+        case O_FACE_ANGLE_PITCH_INDEX: {
+            s32 ai = IFIELD(target, oPosX) - IFIELD(obj, oPosX);
+            s32 ci = IFIELD(target, oPosZ) - IFIELD(obj, oPosZ);
+            ai = sqrtu(ai * ai + ci * ci);
+
+            s32 bi = -IFIELD(obj, oPosY);
+            s32 di = -IFIELD(target, oPosY);
+
+            targetAngle = atan2sq(ai, di - bi);
+            break;
+        }
+
+        case O_MOVE_ANGLE_YAW_INDEX:
+        case O_FACE_ANGLE_YAW_INDEX: {
+            q32 a = IFIELD(obj, oPosZ);
+            q32 c = IFIELD(target, oPosZ);
+            q32 b = IFIELD(obj, oPosX);
+            q32 d = IFIELD(target, oPosX);
+
+            targetAngle = atan2sq(c - a, d - b);
+            break;
+        }
+    }
+
+    startAngle = o->rawData.asU32[angleIndex];
+    o->rawData.asU32[angleIndex] = approach_s16_symmetric(startAngle, targetAngle, turnAmount);
+    return targetAngle;
+}
+
+void obj_set_parent_relative_pos(struct Object *obj, s16 relX, s16 relY, s16 relZ) {
+    ISETFIELD(obj, oParentRelativePosX, relX);
+    ISETFIELD(obj, oParentRelativePosY, relY);
+    ISETFIELD(obj, oParentRelativePosZ, relZ);
+}
+
+void obj_set_pos(struct Object *obj, s16 x, s16 y, s16 z) {
+    ISETFIELD(obj, oPosX, x);
+    ISETFIELD(obj, oPosY, y);
+    ISETFIELD(obj, oPosZ, z);
+}
+
+void obj_set_angle(struct Object *obj, s16 pitch, s16 yaw, s16 roll) {
+    obj->oFaceAnglePitch = pitch;
+    obj->oFaceAngleYaw = yaw;
+    obj->oFaceAngleRoll = roll;
+
+    obj->oMoveAnglePitch = pitch;
+    obj->oMoveAngleYaw = yaw;
+    obj->oMoveAngleRoll = roll;
+}
+
+/*
+ * Spawns an object at an absolute location with a specified angle.
+ */
+struct Object *spawn_object_abs_with_rot(struct Object *parent, s16 uselessArg, u32 model,
+                                         const BehaviorScript *behavior,
+                                         s16 x, s16 y, s16 z, s16 rx, s16 ry, s16 rz) {
+    // 'uselessArg' is unused in the function spawn_object_at_origin()
+    struct Object *newObj = spawn_object_at_origin(parent, uselessArg, model, behavior);
+    obj_set_pos(newObj, x, y, z);
+    obj_set_angle(newObj, rx, ry, rz);
+
+    return newObj;
+}
+
+/*
+ * Spawns an object relative to the parent with a specified angle... is what it is supposed to do.
+ * The rz argument is never used, and the z offset is used for z-rotation instead. This is most likely
+ * a copy-paste typo by one of the programmers.
+ */
+struct Object *spawn_object_rel_with_rot(struct Object *parent, u32 model, const BehaviorScript *behavior,
+                                         s16 xOff, s16 yOff, s16 zOff, s16 rx, s16 ry, UNUSED s16 rz) {
+    struct Object *newObj = spawn_object_at_origin(parent, 0, model, behavior);
+    newObj->oFlags |= OBJ_FLAG_TRANSFORM_RELATIVE_TO_PARENT;
+    obj_set_parent_relative_pos(newObj, xOff, yOff, zOff);
+    obj_set_angle(newObj, rx, ry, zOff); // Nice typo you got there Nintendo.
+
+    return newObj;
+}
+
+struct Object *spawn_obj_with_transform_flags(struct Object *sp20, s32 model, const BehaviorScript *sp28) {
+    struct Object *sp1C = spawn_object(sp20, model, sp28);
+    sp1C->oFlags |= OBJ_FLAG_0020 | OBJ_FLAG_SET_THROW_MATRIX_FROM_TRANSFORM;
+    return sp1C;
+}
+
+struct Object *spawn_water_droplet(struct Object *parent, struct WaterDropletParams *params) {
+    f32 randomScale;
+    struct Object *newObj = spawn_object(parent, params->model, params->behavior);
+
+    if (params->flags & WATER_DROPLET_FLAG_RAND_ANGLE) {
+        newObj->oMoveAngleYaw = random_u16();
+    }
+
+    if (params->flags & WATER_DROPLET_FLAG_RAND_ANGLE_INCR_PLUS_8000) {
+        newObj->oMoveAngleYaw = (s16)(newObj->oMoveAngleYaw + 0x8000)
+                                + (s16) random_s16_around_zero(params->moveAngleRange);
+    }
+
+    if (params->flags & WATER_DROPLET_FLAG_RAND_ANGLE_INCR) {
+        newObj->oMoveAngleYaw =
+            (s16) newObj->oMoveAngleYaw + (s16) random_s16_around_zero(params->moveAngleRange);
+    }
+
+    if (params->flags & WATER_DROPLET_FLAG_SET_Y_TO_WATER_LEVEL) {
+        QSETFIELD(newObj, oPosY, find_water_levelq(QFIELD(newObj, oPosX), QFIELD(newObj, oPosZ)));
+    }
+
+    if (params->flags & WATER_DROPLET_FLAG_RAND_OFFSET_XZ) {
+        obj_translate_xz_random(newObj, params->moveRange);
+    }
+
+    if (params->flags & WATER_DROPLET_FLAG_RAND_OFFSET_XYZ) {
+        obj_translate_xyz_random(newObj, params->moveRange);
+    }
+
+    QSETFIELD(newObj, oForwardVel, qmul(random_q32(), q(params->randForwardVelScale)) + q(params->randForwardVelOffset));
+    QSETFIELD(newObj, oVelY, qmul(random_q32(), q(params->randYVelScale)) + q(params->randYVelOffset));
+
+    randomScale = random_float() * params->randSizeScale + params->randSizeOffset;
+    obj_scale(newObj, randomScale);
+
+    return newObj;
+}
+
+struct Object *spawn_object_at_origin(struct Object *parent, UNUSED s32 unusedArg, u32 model,
+                                      const BehaviorScript *behavior) {
+    struct Object *obj;
+    const BehaviorScript *behaviorAddr;
+
+    behaviorAddr = segmented_to_virtual(behavior);
+    obj = create_object(behaviorAddr);
+
+    obj->parentObj = parent;
+    obj->header.gfx.areaIndex = parent->header.gfx.areaIndex;
+    obj->header.gfx.activeAreaIndex = parent->header.gfx.areaIndex;
+
+    geo_obj_init((struct GraphNodeObject *) &obj->header.gfx, gLoadedGraphNodes[model], gVec3fZero,
+                 gVec3sZero);
+
+    return obj;
+}
+
+struct Object *spawn_object(struct Object *parent, s32 model, const BehaviorScript *behavior) {
+    struct Object *obj = spawn_object_at_origin(parent, 0, model, behavior);
+
+    obj_copy_pos_and_angle(obj, parent);
+
+    return obj;
+}
+
+struct Object *try_to_spawn_object(s16 offsetY, f32 scale, struct Object *parent, s32 model,
+                                   const BehaviorScript *behavior) {
+    struct Object *obj;
+
+    if (gFreeObjectList.next != NULL) {
+        obj = spawn_object(parent, model, behavior);
+        QMODFIELD(obj, oPosY, += offsetY);
+        obj_scale(obj, scale);
+        return obj;
+    } else {
+        return NULL;
+    }
+}
+
+struct Object *spawn_object_with_scale(struct Object *parent, s32 model, const BehaviorScript *behavior, f32 scale) {
+    struct Object *obj = spawn_object_at_origin(parent, 0, model, behavior);
+
+    obj_copy_pos_and_angle(obj, parent);
+    obj_scale(obj, scale);
+
+    return obj;
+}
+
+static void obj_build_relative_transform(struct Object *obj) {
+    obj_build_transform_from_pos_and_angle(obj, O_PARENT_RELATIVE_POS_INDEX, O_FACE_ANGLE_INDEX);
+    obj_translate_local(obj, O_POS_INDEX, O_PARENT_RELATIVE_POS_INDEX);
+}
+
+struct Object *spawn_object_relative(s16 behaviorParam, s16 relativePosX, s16 relativePosY, s16 relativePosZ,
+                                     struct Object *parent, s32 model, const BehaviorScript *behavior) {
+    struct Object *obj = spawn_object_at_origin(parent, 0, model, behavior);
+
+    obj_copy_pos_and_angle(obj, parent);
+    obj_set_parent_relative_pos(obj, relativePosX, relativePosY, relativePosZ);
+    obj_build_relative_transform(obj);
+
+    obj->oBehParams2ndByte = behaviorParam;
+    obj->oBehParams = (behaviorParam & 0xFF) << 16;
+
+    return obj;
+}
+
+struct Object *spawn_object_relative_with_scale(s16 behaviorParam, s16 relativePosX, s16 relativePosY,
+                                                s16 relativePosZ, f32 scale, struct Object *parent,
+                                                s32 model, const BehaviorScript *behavior) {
+    struct Object *obj = spawn_object_relative(behaviorParam, relativePosX, relativePosY, relativePosZ,
+                                               parent, model, behavior);
+    obj_scale(obj, scale);
+
+    return obj;
+}
+
+void cur_obj_move_using_vel(void) {
+    QMODFIELD(o, oPosX, += QFIELD(o, oVelX));
+    QMODFIELD(o, oPosY, += QFIELD(o, oVelY));
+    QMODFIELD(o, oPosZ, += QFIELD(o, oVelZ));
+}
+
+void obj_copy_graph_y_offset(struct Object *dst, struct Object *src) {
+    QSETFIELD(dst, oGraphYOffset, QFIELD(src, oGraphYOffset));
+}
+
+void obj_copy_pos_and_angle(struct Object *dst, struct Object *src) {
+    obj_copy_pos(dst, src);
+    obj_copy_angle(dst, src);
+}
+
+void obj_copy_pos(struct Object *dst, struct Object *src) {
+    QSETFIELD(dst, oPosX, QFIELD(src, oPosX));
+    QSETFIELD(dst, oPosY, QFIELD(src, oPosY));
+    QSETFIELD(dst, oPosZ, QFIELD(src, oPosZ));
+}
+
+void obj_copy_angle(struct Object *dst, struct Object *src) {
+    dst->oMoveAnglePitch = src->oMoveAnglePitch;
+    dst->oMoveAngleYaw = src->oMoveAngleYaw;
+    dst->oMoveAngleRoll = src->oMoveAngleRoll;
+
+    dst->oFaceAnglePitch = src->oFaceAnglePitch;
+    dst->oFaceAngleYaw = src->oFaceAngleYaw;
+    dst->oFaceAngleRoll = src->oFaceAngleRoll;
+}
+
+void obj_set_gfx_pos_from_pos(struct Object *obj) {
+    obj->header.gfx.posi[0] = IFIELD(obj, oPosX);
+    obj->header.gfx.posi[1] = IFIELD(obj, oPosY);
+    obj->header.gfx.posi[2] = IFIELD(obj, oPosZ);
+}
+
+void obj_init_animation(struct Object *obj, s32 animIndex) {
+    struct Animation **anims = o->oAnimations;
+    geo_obj_init_animation(&obj->header.gfx, &anims[animIndex]);
+}
+
+void obj_apply_scale_to_transform(struct Object *obj) {
+	for(int i = 0; i < 3; i++) {
+		q32 scaleq = obj->header.gfx.scaleq[i];
+		obj->transformq.m[i][0] = qmul((q32) obj->transformq.m[i][0], scaleq);
+		obj->transformq.m[i][1] = qmul((q32) obj->transformq.m[i][1], scaleq);
+		obj->transformq.m[i][2] = qmul((q32) obj->transformq.m[i][2], scaleq);
+	}
+}
+
+void obj_copy_scale(struct Object *dst, struct Object *src) {
+    dst->header.gfx.scaleq[0] = src->header.gfx.scaleq[0];
+    dst->header.gfx.scaleq[1] = src->header.gfx.scaleq[1];
+    dst->header.gfx.scaleq[2] = src->header.gfx.scaleq[2];
+}
+
+void obj_scale_xyzq(struct Object *obj, q32 xScaleq, q32 yScaleq, q32 zScaleq) {
+    obj->header.gfx.scaleq[0] = xScaleq;
+    obj->header.gfx.scaleq[1] = yScaleq;
+    obj->header.gfx.scaleq[2] = zScaleq;
+}
+
+void obj_scale(struct Object *obj, f32 scale) {
+	q32 scaleq = q(scale);
+    obj->header.gfx.scaleq[0] = scaleq;
+    obj->header.gfx.scaleq[1] = scaleq;
+    obj->header.gfx.scaleq[2] = scaleq;
+}
+
+void cur_obj_scaleq(q32 scaleq) {
+    o->header.gfx.scaleq[0] = scaleq;
+    o->header.gfx.scaleq[1] = scaleq;
+    o->header.gfx.scaleq[2] = scaleq;
+}
+
+void cur_obj_init_animation(s32 animIndex) {
+    struct Animation **anims = o->oAnimations;
+    geo_obj_init_animation(&o->header.gfx, &anims[animIndex]);
+}
+
+void cur_obj_init_animation_with_sound(s32 animIndex) {
+    struct Animation **anims = o->oAnimations;
+    geo_obj_init_animation(&o->header.gfx, &anims[animIndex]);
+    o->oSoundStateID = animIndex;
+}
+
+void cur_obj_init_animation_with_accel_and_sound(s32 animIndex, f32 accel) {
+    struct Animation **anims = o->oAnimations;
+    s32 animAccel = (s32)(accel * 65536.0f);
+    geo_obj_init_animation_accel(&o->header.gfx, &anims[animIndex], animAccel);
+    o->oSoundStateID = animIndex;
+}
+
+void obj_init_animation_with_sound(struct Object *obj, const struct Animation * const* animations, s32 animIndex) {
+    struct Animation **anims = (struct Animation **)animations;
+    obj->oAnimations = (struct Animation **)animations;
+    geo_obj_init_animation(&obj->header.gfx, &anims[animIndex]);
+    obj->oSoundStateID = animIndex;
+}
+
+void cur_obj_enable_rendering_and_become_tangible(struct Object *obj) {
+    obj->header.gfx.node.flags |= GRAPH_RENDER_ACTIVE;
+    obj->oIntangibleTimer = 0;
+}
+
+void cur_obj_enable_rendering(void) {
+    o->header.gfx.node.flags |= GRAPH_RENDER_ACTIVE;
+}
+
+void cur_obj_disable_rendering_and_become_intangible(struct Object *obj) {
+    obj->header.gfx.node.flags &= ~GRAPH_RENDER_ACTIVE;
+    obj->oIntangibleTimer = -1;
+}
+
+void cur_obj_disable_rendering(void) {
+    o->header.gfx.node.flags &= ~GRAPH_RENDER_ACTIVE;
+}
+
+void cur_obj_unhide(void) {
+    o->header.gfx.node.flags &= ~GRAPH_RENDER_INVISIBLE;
+}
+
+void cur_obj_hide(void) {
+    o->header.gfx.node.flags |= GRAPH_RENDER_INVISIBLE;
+}
+
+void cur_obj_set_pos_relative(struct Object *other, f32 dleft, f32 dy, f32 dforward) {
+    f32 facingZ = coss(other->oMoveAngleYaw);
+    f32 facingX = sins(other->oMoveAngleYaw);
+
+    f32 dz = dforward * facingZ - dleft * facingX;
+    f32 dx = dforward * facingX + dleft * facingZ;
+
+    o->oMoveAngleYaw = other->oMoveAngleYaw;
+
+    QSETFIELD(o, oPosX, QFIELD(other, oPosX) + dx);
+    QSETFIELD(o, oPosY, QFIELD(other, oPosY) + dy);
+    QSETFIELD(o, oPosZ, QFIELD(other, oPosZ) + dz);
+}
+
+void cur_obj_set_pos_relative_to_parent(f32 dleft, f32 dy, f32 dforward) {
+    cur_obj_set_pos_relative(o->parentObj, dleft, dy, dforward);
+}
+
+void cur_obj_enable_rendering_2(void) {
+    cur_obj_enable_rendering();
+}
+
+void cur_obj_unused_init_on_floor(void) {
+    cur_obj_enable_rendering();
+
+    QSETFIELD(o, oPosY, find_floor_heightq(QFIELD(o, oPosX), QFIELD(o, oPosY), QFIELD(o, oPosZ)));
+    if (QFIELD(o, oPosY) < q(FLOOR_LOWER_LIMIT_MISC)) {
+        cur_obj_set_pos_relative_to_parent(0, 0, -70);
+        QSETFIELD(o, oPosY, find_floor_heightq(QFIELD(o, oPosX), QFIELD(o, oPosY), QFIELD(o, oPosZ)));
+    }
+}
+
+void obj_set_face_angle_to_move_angle(struct Object *obj) {
+    obj->oFaceAnglePitch = obj->oMoveAnglePitch;
+    obj->oFaceAngleYaw = obj->oMoveAngleYaw;
+    obj->oFaceAngleRoll = obj->oMoveAngleRoll;
+}
+
+u32 get_object_list_from_behavior(const BehaviorScript *behavior) {
+    u32 objectList;
+
+    // If the first behavior command is "begin", then get the object list header
+    // from there
+    if ((behavior[0] >> 24) == 0) {
+        objectList = (behavior[0] >> 16) & 0xFFFF;
+    } else {
+        objectList = OBJ_LIST_DEFAULT;
+    }
+
+    return objectList;
+}
+
+struct Object *cur_obj_nearest_object_with_behavior(const BehaviorScript *behavior) {
+    struct Object *obj;
+    f32 dist;
+
+    obj = cur_obj_find_nearest_object_with_behavior(behavior, &dist);
+
+    return obj;
+}
+
+f32 cur_obj_dist_to_nearest_object_with_behavior(const BehaviorScript *behavior) {
+    struct Object *obj;
+    f32 dist;
+
+    obj = cur_obj_find_nearest_object_with_behavior(behavior, &dist);
+    if (obj == NULL) {
+        dist = 15000.0f;
+    }
+
+    return dist;
+}
+
+struct Object *cur_obj_find_nearest_object_with_behavior(const BehaviorScript *behavior, f32 *dist) {
+    uintptr_t *behaviorAddr = segmented_to_virtual(behavior);
+    struct Object *closestObj = NULL;
+    struct Object *obj;
+    struct ObjectNode *listHead;
+    s32 minDist = 0x20000;
+
+    listHead = &gObjectLists[get_object_list_from_behavior(behaviorAddr)];
+    obj = (struct Object *) listHead->next;
+
+    while (obj != (struct Object *) listHead) {
+        if (obj->behavior == behaviorAddr) {
+            if (obj->activeFlags != ACTIVE_FLAG_DEACTIVATED && obj != o) {
+                s32 objDist = qtrunc(dist_between_objectsq(o, obj));
+                if (objDist < minDist) {
+                    closestObj = obj;
+                    minDist = objDist;
+                }
+            }
+        }
+        obj = (struct Object *) obj->header.next;
+    }
+
+    *dist = minDist;
+    return closestObj;
+}
+
+struct Object *find_unimportant_object(void) {
+    struct ObjectNode *listHead = &gObjectLists[OBJ_LIST_UNIMPORTANT];
+    struct ObjectNode *obj = listHead->next;
+
+    if (listHead == obj) {
+        obj = NULL;
+    }
+
+    return (struct Object *) obj;
+}
+
+s32 count_unimportant_objects(void) {
+    struct ObjectNode *listHead = &gObjectLists[OBJ_LIST_UNIMPORTANT];
+    struct ObjectNode *obj = listHead->next;
+    s32 count = 0;
+
+    while (listHead != obj) {
+        count++;
+        obj = obj->next;
+    }
+
+    return count;
+}
+
+s32 count_objects_with_behavior(const BehaviorScript *behavior) {
+    uintptr_t *behaviorAddr = segmented_to_virtual(behavior);
+    struct ObjectNode *listHead = &gObjectLists[get_object_list_from_behavior(behaviorAddr)];
+    struct ObjectNode *obj = listHead->next;
+    s32 count = 0;
+
+    while (listHead != obj) {
+        if (((struct Object *) obj)->behavior == behaviorAddr) {
+            count++;
+        }
+
+        obj = obj->next;
+    }
+
+    return count;
+}
+
+struct Object *cur_obj_find_nearby_held_actor(const BehaviorScript *behavior, s32 maxDist) {
+    const BehaviorScript *behaviorAddr = segmented_to_virtual(behavior);
+    struct ObjectNode *listHead;
+    struct Object *obj;
+    struct Object *foundObj;
+
+    listHead = &gObjectLists[OBJ_LIST_GENACTOR];
+    obj = (struct Object *) listHead->next;
+    foundObj = NULL;
+
+    while ((struct Object *) listHead != obj) {
+        if (obj->behavior == behaviorAddr) {
+            if (obj->activeFlags != ACTIVE_FLAG_DEACTIVATED) {
+                // This includes the dropped and thrown states. By combining instant
+                // release, this allows us to activate mama penguin remotely
+                if (obj->oHeldState != HELD_FREE) {
+                    if (qtrunc(dist_between_objectsq(o, obj)) < maxDist) {
+                        foundObj = obj;
+                        break;
+                    }
+                }
+            }
+        }
+
+        obj = (struct Object *) obj->header.next;
+    }
+
+    return foundObj;
+}
+
+static void cur_obj_reset_timer_and_subaction(void) {
+    o->oTimer = 0;
+    o->oSubAction = 0;
+}
+
+void cur_obj_change_action(s32 action) {
+    o->oAction = action;
+    o->oPrevAction = action;
+    cur_obj_reset_timer_and_subaction();
+}
+
+void cur_obj_set_vel_from_mario_vel(f32 f12, f32 f14) {
+    f32 sp4 = gMarioStates[0].forwardVel;
+    f32 sp0 = f12 * f14;
+
+    if (sp4 < sp0) {
+        FSETFIELD(o, oForwardVel, sp0);
+    } else {
+        FSETFIELD(o, oForwardVel, sp4 * f14);
+    }
+}
+
+BAD_RETURN(s16) cur_obj_reverse_animation(void) {
+    if (o->header.gfx.animInfo.animFrame >= 0) {
+        o->header.gfx.animInfo.animFrame--;
+    }
+}
+
+BAD_RETURN(s32) cur_obj_extend_animation_if_at_end(void) {
+    s32 sp4 = o->header.gfx.animInfo.animFrame;
+    s32 sp0 = o->header.gfx.animInfo.curAnim->loopEnd - 2;
+
+    if (sp4 == sp0) o->header.gfx.animInfo.animFrame--;
+}
+
+s32 cur_obj_check_if_near_animation_end(void) {
+    u32 animFlags = (s32) o->header.gfx.animInfo.curAnim->flags;
+    s32 animFrame = o->header.gfx.animInfo.animFrame;
+    s32 nearLoopEnd = o->header.gfx.animInfo.curAnim->loopEnd - 2;
+    s32 isNearEnd = FALSE;
+
+    if (animFlags & ANIM_FLAG_NOLOOP && nearLoopEnd + 1 == animFrame) {
+        isNearEnd = TRUE;
+    }
+
+    if (animFrame == nearLoopEnd) {
+        isNearEnd = TRUE;
+    }
+
+    return isNearEnd;
+}
+
+s32 cur_obj_check_if_at_animation_end(void) {
+    s32 animFrame = o->header.gfx.animInfo.animFrame;
+    s32 lastFrame = o->header.gfx.animInfo.curAnim->loopEnd - 1;
+
+    if (animFrame == lastFrame) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+s32 cur_obj_check_anim_frame(s32 frame) {
+    s32 animFrame = o->header.gfx.animInfo.animFrame;
+
+    if (animFrame == frame) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+s32 cur_obj_check_anim_frame_in_range(s32 startFrame, s32 rangeLength) {
+    s32 animFrame = o->header.gfx.animInfo.animFrame;
+
+    if (animFrame >= startFrame && animFrame < startFrame + rangeLength) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+s32 cur_obj_check_frame_prior_current_frame(s16 *a0) {
+    s16 sp6 = o->header.gfx.animInfo.animFrame;
+
+    while (*a0 != -1) {
+        if (*a0 == sp6) {
+            return TRUE;
+        }
+
+        a0++;
+    }
+
+    return FALSE;
+}
+
+s32 mario_is_in_air_action(void) {
+    if (gMarioStates[0].action & ACT_FLAG_AIR) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+s32 mario_is_dive_sliding(void) {
+    if (gMarioStates[0].action == ACT_DIVE_SLIDE) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+void cur_obj_set_y_vel_and_animation(f32 yVel, s32 animIndex) {
+    FSETFIELD(o, oVelY, yVel);
+    cur_obj_init_animation_with_sound(animIndex);
+}
+
+void cur_obj_unrender_set_action_and_anim(s32 animIndex, s32 action) {
+    cur_obj_become_intangible();
+    cur_obj_disable_rendering();
+
+    // only set animation if non-negative value
+    if (animIndex >= 0) {
+        cur_obj_init_animation_with_sound(animIndex);
+    }
+
+    o->oAction = action;
+}
+
+static void cur_obj_move_after_thrown_or_dropped(f32 forwardVel, f32 velY) {
+    o->oMoveFlags = 0;
+    QSETFIELD(o, oFloorHeight, find_floor_heightq(QFIELD(o, oPosX), QFIELD(o, oPosY) + q(160), QFIELD(o, oPosZ)));
+
+    if (QFIELD(o, oFloorHeight) > QFIELD(o, oPosY)) {
+        QSETFIELD(o, oPosY, QFIELD(o, oFloorHeight));
+    } else if (QFIELD(o, oFloorHeight) < q(FLOOR_LOWER_LIMIT_MISC)) {
+        //! OoB failsafe
+        obj_copy_pos(o, gMarioObject);
+        QSETFIELD(o, oFloorHeight, find_floor_heightq(QFIELD(o, oPosX), QFIELD(o, oPosY) + q(160), QFIELD(o, oPosZ)));
+    }
+
+    FSETFIELD(o, oForwardVel, forwardVel);
+    FSETFIELD(o, oVelY, velY);
+
+    if (QFIELD(o, oForwardVel) != 0) {
+        cur_obj_move_yq(/*gravity*/ q(-4), /*bounciness*/ q(-0.1), /*buoyancy*/ q(2));
+    }
+}
+
+void cur_obj_get_thrown_or_placed(f32 forwardVel, f32 velY, s32 thrownAction) {
+    if (o->behavior == segmented_to_virtual(bhvBowser)) {
+        // Interestingly, when bowser is thrown, he is offset slightly to
+        // Mario's right
+        cur_obj_set_pos_relative_to_parent(-41.684f, 85.859f, 321.577f);
+    } else {
+    }
+
+    cur_obj_become_tangible();
+    cur_obj_enable_rendering();
+
+    o->oHeldState = HELD_FREE;
+
+    if ((o->oInteractionSubtype & INT_SUBTYPE_HOLDABLE_NPC) || forwardVel == 0.0f) {
+        cur_obj_move_after_thrown_or_dropped(0.0f, 0.0f);
+    } else {
+        o->oAction = thrownAction;
+        cur_obj_move_after_thrown_or_dropped(forwardVel, velY);
+    }
+}
+
+void cur_obj_get_dropped(void) {
+    cur_obj_become_tangible();
+    cur_obj_enable_rendering();
+
+    o->oHeldState = HELD_FREE;
+    cur_obj_move_after_thrown_or_dropped(0.0f, 0.0f);
+}
+
+void cur_obj_set_model(s32 modelID) {
+    o->header.gfx.sharedChild = gLoadedGraphNodes[modelID];
+}
+
+void mario_set_flag(s32 flag) {
+    gMarioStates[0].flags |= flag;
+}
+
+s32 cur_obj_clear_interact_status_flag(s32 flag) {
+    if (o->oInteractStatus & flag) {
+        o->oInteractStatus &= flag ^ ~(0);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+/**
+ * Mark an object to be unloaded at the end of the frame.
+ */
+void obj_mark_for_deletion(struct Object *obj) {
+    //! This clears all activeFlags. Since some of these flags disable behavior,
+    //  setting it to 0 could potentially enable unexpected behavior. After an
+    //  object is marked for deletion, it still updates on that frame (I think),
+    //  so this is worth looking into.
+    obj->activeFlags = ACTIVE_FLAG_DEACTIVATED;
+}
+
+void cur_obj_disable(void) {
+    cur_obj_disable_rendering();
+    cur_obj_hide();
+    cur_obj_become_intangible();
+}
+
+void cur_obj_become_intangible(void) {
+    // When the timer is negative, the object is intangible and the timer
+    // doesn't count down
+    o->oIntangibleTimer = -1;
+}
+
+void cur_obj_become_tangible(void) {
+    o->oIntangibleTimer = 0;
+}
+
+void obj_become_tangible(struct Object *obj) {
+    obj->oIntangibleTimer = 0;
+}
+
+void cur_obj_update_floor_height(void) {
+    struct Surface *floor;
+    QSETFIELD(o, oFloorHeight, find_floorq(QFIELD(o, oPosX), QFIELD(o, oPosY), QFIELD(o, oPosZ), &floor));
+}
+
+struct Surface *cur_obj_update_floor_height_and_get_floor(void) {
+    struct Surface *floor;
+    QSETFIELD(o, oFloorHeight, find_floorq(QFIELD(o, oPosX), QFIELD(o, oPosY), QFIELD(o, oPosZ), &floor));
+    return floor;
+}
+
+static void apply_drag_to_valueq(q32 *valueq, q32 dragStrengthq) {
+    q32 decelq;
+
+    if (*valueq != 0) {
+        //! Can overshoot if |*value| > 1/(dragStrength * 0.0001)
+        decelq = qmul3(*valueq, *valueq, dragStrengthq / 10000);
+
+        if (*valueq > 0) {
+            *valueq -= decelq;
+            if (*valueq < q(0.001)) {
+                *valueq = 0;
+            }
+        } else {
+            *valueq += decelq;
+            if (*valueq > q(-0.001)) {
+                *valueq = 0;
+            }
+        }
+    }
+}
+
+void cur_obj_apply_drag_xzq(q32 dragStrengthq) {
+	q32 velXq = QFIELD(o, oVelX);
+	q32 velZq = QFIELD(o, oVelZ);
+    apply_drag_to_valueq(&velXq, dragStrengthq);
+    apply_drag_to_valueq(&velZq, dragStrengthq);
+	QSETFIELD(o, oVelX, velXq);
+	QSETFIELD(o, oVelZ, velZq);
+}
+
+static s32 cur_obj_move_xzq(q32 steepSlopeNormalYq, s32 careAboutEdgesAndSteepSlopes) {
+    struct Surface *intendedFloor;
+
+    q32 intendedXq = QFIELD(o, oPosX) + QFIELD(o, oVelX);
+    q32 intendedZq = QFIELD(o, oPosZ) + QFIELD(o, oVelZ);
+
+    q32 intendedFloorHeightq = find_floorq(intendedXq, QFIELD(o, oPosY), intendedZq, &intendedFloor);
+    q32 deltaFloorHeightq = intendedFloorHeightq - QFIELD(o, oFloorHeight);
+
+    o->oMoveFlags &= ~OBJ_MOVE_HIT_EDGE;
+
+    if (o->oRoom != -1 && intendedFloor != NULL) {
+        if (intendedFloor->room != 0 && o->oRoom != intendedFloor->room && intendedFloor->room != 18) {
+            // Don't leave native room
+            return FALSE;
+        }
+    }
+
+    if (intendedFloorHeightq < q(FLOOR_LOWER_LIMIT_MISC)) {
+        // Don't move into OoB
+        o->oMoveFlags |= OBJ_MOVE_HIT_EDGE;
+        return FALSE;
+    } else if (deltaFloorHeightq < q(5)) {
+        if (!careAboutEdgesAndSteepSlopes) {
+            // If we don't care about edges or steep slopes, okay to move
+            QSETFIELD(o, oPosX, intendedXq);
+            QSETFIELD(o, oPosZ, intendedZq);
+            return TRUE;
+        } else if (deltaFloorHeightq < q(-50) && (o->oMoveFlags & OBJ_MOVE_ON_GROUND)) {
+            // Don't walk off an edge
+            o->oMoveFlags |= OBJ_MOVE_HIT_EDGE;
+            return FALSE;
+        } else if ((q32) intendedFloor->compressed_normal.y * QONE / COMPRESSED_NORMAL_ONE > steepSlopeNormalYq) {
+            // Allow movement onto a slope, provided it's not too steep
+            QSETFIELD(o, oPosX, intendedXq);
+            QSETFIELD(o, oPosZ, intendedZq);
+            return TRUE;
+        } else {
+            // We are likely trying to move onto a steep downward slope
+            o->oMoveFlags |= OBJ_MOVE_HIT_EDGE;
+            return FALSE;
+        }
+    } else if ((q32) intendedFloor->compressed_normal.y * QONE / COMPRESSED_NORMAL_ONE > steepSlopeNormalYq || QFIELD(o, oPosY) > intendedFloorHeightq) {
+        // Allow movement upward, provided either:
+        // - The target floor is flat enough (e.g. walking up stairs)
+        // - We are above the target floor (most likely in the air)
+        QSETFIELD(o, oPosX, intendedXq);
+        QSETFIELD(o, oPosZ, intendedZq);
+        //! Returning FALSE but moving anyway (not exploitable; return value is
+        //  never used)
+    }
+
+    // We are likely trying to move onto a steep upward slope
+    return FALSE;
+}
+
+static void cur_obj_move_update_underwater_flags(void) {
+    q32 decelYq = (qmul(sqrtq(qmul(QFIELD(o, oVelY), QFIELD(o, oVelY))), (QFIELD(o, oDragStrength) * 7))) / 100;
+
+    if (QFIELD(o, oVelY) > 0) {
+        QSETFIELD(o, oVelY, QFIELD(o, oVelY) - decelYq);
+    } else {
+        QSETFIELD(o, oVelY, QFIELD(o, oVelY) + decelYq);
+    }
+
+    if (QFIELD(o, oPosY) < QFIELD(o, oFloorHeight)) {
+        QSETFIELD(o, oPosY, QFIELD(o, oFloorHeight));
+        o->oMoveFlags |= OBJ_MOVE_UNDERWATER_ON_GROUND;
+    } else {
+        o->oMoveFlags |= OBJ_MOVE_UNDERWATER_OFF_GROUND;
+    }
+}
+
+static void cur_obj_move_update_ground_air_flagsq(q32 bouncinessq) {
+    o->oMoveFlags &= ~OBJ_MOVE_BOUNCE;
+
+    if (QFIELD(o, oPosY) < QFIELD(o, oFloorHeight)) {
+        // On the first frame that we touch the ground, set OBJ_MOVE_LANDED.
+        // On subsequent frames, set OBJ_MOVE_ON_GROUND
+        if (!(o->oMoveFlags & OBJ_MOVE_ON_GROUND)) {
+            if (clear_move_flag(&o->oMoveFlags, OBJ_MOVE_LANDED)) {
+                o->oMoveFlags |= OBJ_MOVE_ON_GROUND;
+            } else {
+                o->oMoveFlags |= OBJ_MOVE_LANDED;
+            }
+        }
+
+        QSETFIELD(o, oPosY, QFIELD(o, oFloorHeight));
+
+        if (QFIELD(o, oVelY) < 0) {
+            QSETFIELD(o, oVelY, qmul(QFIELD(o, oVelY), bouncinessq));
+        }
+
+        if (QFIELD(o, oVelY) > q(5)) {
+            //! This overestimates since velY could be > 5 here
+            //! without bounce (e.g. jump into misa).
+            o->oMoveFlags |= OBJ_MOVE_BOUNCE;
+        }
+    } else {
+        o->oMoveFlags &= ~OBJ_MOVE_LANDED;
+        if (clear_move_flag(&o->oMoveFlags, OBJ_MOVE_ON_GROUND)) {
+            o->oMoveFlags |= OBJ_MOVE_LEFT_GROUND;
+        }
+    }
+
+    o->oMoveFlags &= ~OBJ_MOVE_MASK_IN_WATER;
+}
+
+static q32 cur_obj_move_y_and_get_water_levelq(q32 gravityq, q32 buoyancyq) {
+    q32 waterLevelq;
+
+    QSETFIELD(o, oVelY, QFIELD(o, oVelY) + gravityq + buoyancyq);
+    if (QFIELD(o, oVelY) < q(-78)) {
+        QSETFIELD(o, oVelY, q(-78));
+    }
+
+    QSETFIELD(o, oPosY, QFIELD(o, oPosY) + QFIELD(o, oVelY));
+    if (o->activeFlags & ACTIVE_FLAG_UNK10) {
+        waterLevelq = q(FLOOR_LOWER_LIMIT);
+    } else {
+        waterLevelq = find_water_levelq(QFIELD(o, oPosX), QFIELD(o, oPosZ));
+    }
+
+    return waterLevelq;
+}
+
+void cur_obj_move_yq(q32 gravityq, q32 bouncinessq, q32 buoyancyq) {
+    q32 waterLevelq;
+
+    o->oMoveFlags &= ~OBJ_MOVE_LEFT_GROUND;
+
+    if (o->oMoveFlags & OBJ_MOVE_AT_WATER_SURFACE) {
+        if (QFIELD(o, oVelY) > q(5)) {
+            o->oMoveFlags &= ~OBJ_MOVE_MASK_IN_WATER;
+            o->oMoveFlags |= OBJ_MOVE_LEAVING_WATER;
+        }
+    }
+
+    if (!(o->oMoveFlags & OBJ_MOVE_MASK_IN_WATER)) {
+        waterLevelq = cur_obj_move_y_and_get_water_levelq(gravityq, 0);
+        if (QFIELD(o, oPosY) > waterLevelq) {
+            //! We only handle floor collision if the object does not enter
+            //  water. This allows e.g. coins to clip through floors if they
+            //  enter water on the same frame.
+            cur_obj_move_update_ground_air_flagsq(bouncinessq);
+        } else {
+            o->oMoveFlags |= OBJ_MOVE_ENTERED_WATER;
+            o->oMoveFlags &= ~OBJ_MOVE_MASK_ON_GROUND;
+        }
+    } else {
+        o->oMoveFlags &= ~OBJ_MOVE_ENTERED_WATER;
+
+        waterLevelq = cur_obj_move_y_and_get_water_levelq(gravityq, buoyancyq);
+        if (QFIELD(o, oPosY) < waterLevelq) {
+            cur_obj_move_update_underwater_flags();
+        } else {
+            if (QFIELD(o, oPosY) < QFIELD(o, oFloorHeight)) {
+                QSETFIELD(o, oPosY, QFIELD(o, oFloorHeight));
+                o->oMoveFlags &= ~OBJ_MOVE_MASK_IN_WATER;
+            } else {
+                QSETFIELD(o, oPosY, waterLevelq);
+                QSETFIELD(o, oVelY, 0);
+                o->oMoveFlags &= ~(OBJ_MOVE_UNDERWATER_OFF_GROUND | OBJ_MOVE_UNDERWATER_ON_GROUND);
+                o->oMoveFlags |= OBJ_MOVE_AT_WATER_SURFACE;
+            }
+        }
+    }
+
+    if (o->oMoveFlags & (OBJ_MOVE_MASK_ON_GROUND | OBJ_MOVE_AT_WATER_SURFACE
+        | OBJ_MOVE_UNDERWATER_OFF_GROUND)) {
+        o->oMoveFlags &= ~OBJ_MOVE_IN_AIR;
+    } else {
+        o->oMoveFlags |= OBJ_MOVE_IN_AIR;
+    }
+}
+
+UNUSED static void stub_obj_helpers_1(void) {
+}
+
+static s32 clear_move_flag(u32 *bitSet, s32 flag) {
+    if (*bitSet & flag) {
+        *bitSet &= flag ^ 0xFFFFFFFF;
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+void cur_obj_unused_resolve_wall_collisions(f32 offsetY, f32 radius) {
+    if (radius > 0.1f) {
+		Vec3q oposq = {QFIELD(o, oPosX), QFIELD(o, oPosY), QFIELD(o, oPosZ)};
+        q32_find_wall_collision(&oposq[0], &oposq[1], &oposq[2], offsetY, radius);
+		QSETFIELD(o, oPosX, oposq[0]);
+		QSETFIELD(o, oPosY, oposq[1]);
+		QSETFIELD(o, oPosZ, oposq[2]);
+    }
+}
+
+s16 abs_angle_diff(s16 x0, s16 x1) {
+    s16 diff = x1 - x0;
+
+    if (diff == -0x8000) {
+        diff = -0x7FFF;
+    }
+
+    if (diff < 0) {
+        diff = -diff;
+    }
+
+    return diff;
+}
+
+void cur_obj_move_xz_using_fvel_and_yaw(void) {
+    QSETFIELD(o, oVelX, qmul(QFIELD(o, oForwardVel), sinqs(o->oMoveAngleYaw)));
+    QSETFIELD(o, oVelZ, qmul(QFIELD(o, oForwardVel), cosqs(o->oMoveAngleYaw)));
+
+    QMODFIELD(o, oPosX, += QFIELD(o, oVelX));
+    QMODFIELD(o, oPosZ, += QFIELD(o, oVelZ));
+}
+
+void cur_obj_move_y_with_terminal_vel(void) {
+    if (QFIELD(o, oVelY) < q(-70)) {
+        QSETFIELD(o, oVelY, q(-70));
+    }
+
+    QMODFIELD(o, oPosY, += QFIELD(o, oVelY));
+}
+
+void cur_obj_compute_vel_xz(void) {
+    QSETFIELD(o, oVelX, qmul(QFIELD(o, oForwardVel), sinqs(o->oMoveAngleYaw)));
+    QSETFIELD(o, oVelZ, qmul(QFIELD(o, oForwardVel), cosqs(o->oMoveAngleYaw)));
+}
+
+f32 increment_velocity_toward_range(f32 value, f32 center, f32 zeroThreshold, f32 increment) {
+    f32 relative;
+    if ((relative = value - center) > 0) {
+        if (relative < zeroThreshold) {
+            return 0.0f;
+        } else {
+            return -increment;
+        }
+    } else {
+        if (relative > -zeroThreshold) {
+            return 0.0f;
+        } else {
+            return increment;
+        }
+    }
+}
+
+s32 obj_check_if_collided_with_object(struct Object *obj1, struct Object *obj2) {
+    s32 i;
+    for (i = 0; i < obj1->numCollidedObjs; i++) {
+        if (obj1->collidedObjs[i] == obj2) {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+void cur_obj_set_behavior(const BehaviorScript *behavior) {
+    o->behavior = segmented_to_virtual(behavior);
+}
+
+void obj_set_behavior(struct Object *obj, const BehaviorScript *behavior) {
+    obj->behavior = segmented_to_virtual(behavior);
+}
+
+s32 cur_obj_has_behavior(const BehaviorScript *behavior) {
+    if (o->behavior == segmented_to_virtual(behavior)) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+s32 obj_has_behavior(struct Object *obj, const BehaviorScript *behavior) {
+    if (obj->behavior == segmented_to_virtual(behavior)) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+f32 cur_obj_lateral_dist_from_mario_to_home(void) {
+    f32 dist;
+    f32 dx = FFIELD(o, oHomeX) - FFIELD(gMarioObject, oPosX);
+    f32 dz = FFIELD(o, oHomeZ) - FFIELD(gMarioObject, oPosZ);
+
+    dist = sqrtf(dx * dx + dz * dz);
+    return dist;
+}
+
+f32 cur_obj_lateral_dist_to_home(void) {
+    f32 dist;
+    f32 dx = FFIELD(o, oHomeX) - FFIELD(o, oPosX);
+    f32 dz = FFIELD(o, oHomeZ) - FFIELD(o, oPosZ);
+
+    dist = sqrtf(dx * dx + dz * dz);
+    return dist;
+}
+
+s32 cur_obj_outside_home_squareq(q32 halfLengthq) {
+    if (QFIELD(o, oHomeX) - halfLengthq > QFIELD(o, oPosX)) {
+        return TRUE;
+    }
+
+    if (QFIELD(o, oHomeX) + halfLengthq < QFIELD(o, oPosX)) {
+        return TRUE;
+    }
+
+    if (QFIELD(o, oHomeZ) - halfLengthq > QFIELD(o, oPosZ)) {
+        return TRUE;
+    }
+
+    if (QFIELD(o, oHomeZ) + halfLengthq < QFIELD(o, oPosZ)) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+s32 cur_obj_outside_home_rectangle(f32 minX, f32 maxX, f32 minZ, f32 maxZ) {
+    if (QFIELD(o, oHomeX) + ftoq(minX) > QFIELD(o, oPosX)) {
+        return TRUE;
+    }
+
+    if (QFIELD(o, oHomeX) + ftoq(maxX) < QFIELD(o, oPosX)) {
+        return TRUE;
+    }
+
+    if (QFIELD(o, oHomeZ) + ftoq(minZ) > QFIELD(o, oPosZ)) {
+        return TRUE;
+    }
+
+    if (QFIELD(o, oHomeZ) + ftoq(maxZ) < QFIELD(o, oPosZ)) {
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+void cur_obj_set_pos_to_home(void) {
+    QSETFIELD(o, oPosX, QFIELD(o, oHomeX));
+    QSETFIELD(o, oPosY, QFIELD(o, oHomeY));
+    QSETFIELD(o, oPosZ, QFIELD(o, oHomeZ));
+}
+
+void cur_obj_set_pos_to_home_and_stop(void) {
+    cur_obj_set_pos_to_home();
+
+    QSETFIELD(o, oForwardVel, 0);
+    QSETFIELD(o, oVelY, 0);
+}
+
+void cur_obj_shake_yq(q32 amountq) {
+    //! Technically could cause a bit of drift, but not much
+    if (o->oTimer % 2 == 0) {
+        QMODFIELD(o, oPosY, += amountq);
+    } else {
+        QMODFIELD(o, oPosY, -= amountq);
+    }
+}
+
+void cur_obj_start_cam_event(UNUSED struct Object *obj, s32 cameraEvent) {
+    gPlayerCameraState->cameraEvent = (s16) cameraEvent;
+    gSecondCameraFocus = o;
+}
+
+// unused, self explanatory, maybe oInteractStatus originally had TRUE/FALSE statements
+void set_mario_interact_true_if_in_range(UNUSED s32 arg0, UNUSED s32 arg1, f32 range) {
+    if (QFIELD(o, oDistanceToMario) < q(range)) {
+        gMarioObject->oInteractStatus = TRUE;
+    }
+}
+
+void obj_set_billboard(struct Object *obj) {
+    obj->header.gfx.node.flags |= GRAPH_RENDER_BILLBOARD;
+}
+
+void cur_obj_set_hitbox_radius_and_height(f32 radius, f32 height) {
+    o->hitboxRadius_s16 = radius;
+    o->hitboxHeight_s16 = height;
+}
+
+void cur_obj_set_hurtbox_radius_and_height(f32 radius, f32 height) {
+    o->hurtboxRadius_s16 = radius;
+    o->hurtboxHeight_s16 = height;
+}
+
+static void obj_spawn_loot_coins(struct Object *obj, s32 numCoins, f32 sp30,
+                                    const BehaviorScript *coinBehavior,
+                                    s16 posJitter, s16 model) {
+    s32 i;
+    q32 spawnHeightq;
+    struct Surface *floor;
+    struct Object *coin;
+
+    spawnHeightq = find_floorq(QFIELD(obj, oPosX), QFIELD(obj, oPosY), QFIELD(obj, oPosZ), &floor);
+    if (QFIELD(obj, oPosY) - spawnHeightq > q(100)) {
+        spawnHeightq = QFIELD(obj, oPosY);
+    }
+
+    for (i = 0; i < numCoins; i++) {
+        if (obj->oNumLootCoins <= 0) {
+            break;
+        }
+
+        obj->oNumLootCoins--;
+
+        coin = spawn_object(obj, model, coinBehavior);
+        obj_translate_xz_random(coin, posJitter);
+        QSETFIELD(coin, oPosY, spawnHeightq);
+        FSETFIELD(coin, oCoinUnk110, sp30);
+    }
+}
+
+void obj_spawn_loot_blue_coins(struct Object *obj, s32 numCoins, f32 sp28, s16 posJitter) {
+    obj_spawn_loot_coins(obj, numCoins, sp28, bhvBlueCoinJumping, posJitter, MODEL_BLUE_COIN);
+}
+
+void obj_spawn_loot_yellow_coins(struct Object *obj, s32 numCoins, f32 sp28) {
+    obj_spawn_loot_coins(obj, numCoins, sp28, bhvSingleCoinGetsSpawned, 0, MODEL_YELLOW_COIN);
+}
+
+void cur_obj_spawn_loot_coin_at_mario_pos(void) {
+    struct Object *coin;
+    if (o->oNumLootCoins <= 0) {
+        return;
+    }
+
+    o->oNumLootCoins--;
+
+    coin = spawn_object(o, MODEL_YELLOW_COIN, bhvSingleCoinGetsSpawned);
+    QSETFIELD(coin, oVelY, q(30));
+
+    obj_copy_pos(coin, gMarioObject);
+}
+
+f32 cur_obj_abs_y_dist_to_home(void) {
+    q32 dist = QFIELD(o, oHomeY) - QFIELD(o, oPosY);
+
+    if (dist < 0) {
+        dist = -dist;
+    }
+
+    return qtof(dist);
+}
+
+s32 cur_obj_advance_looping_anim(void) {
+    s32 animFrame = o->header.gfx.animInfo.animFrame;
+    s32 loopEnd = o->header.gfx.animInfo.curAnim->loopEnd;
+    s32 result;
+
+    if (animFrame < 0) {
+        animFrame = 0;
+    } else if (loopEnd - 1 == animFrame) {
+        animFrame = 0;
+    } else {
+        animFrame++;
+    }
+
+    result = (animFrame << 16) / loopEnd;
+
+    return result;
+}
+
+static s32 cur_obj_detect_steep_floor(s16 steepAngleDegrees) {
+    struct Surface *intendedFloor;
+    q32 intendedXq, intendedFloorHeightq, intendedZq;
+    q32 deltaFloorHeightq;
+    q32 steepNormalYq = q(coss((s16)(steepAngleDegrees * (0x10000 / 360))));
+
+    if (QFIELD(o, oForwardVel) != 0) {
+        intendedXq = QFIELD(o, oPosX) + QFIELD(o, oVelX);
+        intendedZq = QFIELD(o, oPosZ) + QFIELD(o, oVelZ);
+        intendedFloorHeightq = find_floorq(intendedXq, QFIELD(o, oPosY), intendedZq, &intendedFloor);
+        deltaFloorHeightq = intendedFloorHeightq - QFIELD(o, oFloorHeight);
+
+        if (intendedFloorHeightq < q(FLOOR_LOWER_LIMIT_MISC)) {
+            o->oWallAngle = o->oMoveAngleYaw + 0x8000;
+            return 2;
+        } else if ((q32) intendedFloor->compressed_normal.y * QONE / COMPRESSED_NORMAL_ONE < steepNormalYq && deltaFloorHeightq > 0
+                   && intendedFloorHeightq > QFIELD(o, oPosY)) {
+            o->oWallAngle = atan2sq((q32) intendedFloor->compressed_normal.z * QONE / COMPRESSED_NORMAL_ONE, (q32) intendedFloor->compressed_normal.x * QONE / COMPRESSED_NORMAL_ONE);
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
+s32 cur_obj_resolve_wall_collisions(void) {
+    s32 numCollisions;
+    struct Surface *wall;
+    struct WallCollisionData collisionData;
+
+    q32 offsetYq = q(10);
+    q32 radiusq = QFIELD(o, oWallHitboxRadius);
+
+    if (radiusq > q(0.1)) {
+        collisionData.offsetYq = offsetYq;
+        collisionData.radiusq = radiusq;
+        collisionData.xq = q((s16) FFIELD(o, oPosX));
+        collisionData.yq = q((s16) FFIELD(o, oPosY));
+        collisionData.zq = q((s16) FFIELD(o, oPosZ));
+
+        numCollisions = find_wall_collisions(&collisionData);
+        if (numCollisions != 0) {
+            QSETFIELD(o, oPosX, collisionData.xq);
+            QSETFIELD(o, oPosY, collisionData.yq);
+            QSETFIELD(o, oPosZ, collisionData.zq);
+            wall = collisionData.walls[collisionData.numWalls - 1];
+
+            o->oWallAngle = atan2sq((q32) wall->compressed_normal.z * QONE / COMPRESSED_NORMAL_ONE, (q32) wall->compressed_normal.x * QONE / COMPRESSED_NORMAL_ONE);
+            if (abs_angle_diff(o->oWallAngle, o->oMoveAngleYaw) > 0x4000) {
+                return TRUE;
+            } else {
+                return FALSE;
+            }
+        }
+    }
+
+    return FALSE;
+}
+
+static void cur_obj_update_floor(void) {
+    struct Surface *floor = cur_obj_update_floor_height_and_get_floor();
+    o->oFloor = floor;
+
+    if (floor != NULL) {
+        if (floor->type == SURFACE_BURNING) {
+            o->oMoveFlags |= OBJ_MOVE_ABOVE_LAVA;
+        }
+#ifndef VERSION_JP
+        else if (floor->type == SURFACE_DEATH_PLANE) {
+            //! This misses SURFACE_VERTICAL_WIND (and maybe SURFACE_WARP)
+            o->oMoveFlags |= OBJ_MOVE_ABOVE_DEATH_BARRIER;
+        }
+#endif
+
+        o->oFloorType = floor->type;
+        o->oFloorRoom = floor->room;
+    } else {
+        o->oFloorType = 0;
+        o->oFloorRoom = 0;
+    }
+}
+
+static void cur_obj_update_floor_and_resolve_wall_collisions(s16 steepSlopeDegrees) {
+#ifdef VERSION_JP
+    o->oMoveFlags &= ~OBJ_MOVE_ABOVE_LAVA;
+#else
+    o->oMoveFlags &= ~(OBJ_MOVE_ABOVE_LAVA | OBJ_MOVE_ABOVE_DEATH_BARRIER);
+#endif
+
+    if (o->activeFlags & (ACTIVE_FLAG_FAR_AWAY | ACTIVE_FLAG_IN_DIFFERENT_ROOM)) {
+        cur_obj_update_floor();
+        o->oMoveFlags &= ~(OBJ_MOVE_HIT_WALL | OBJ_MOVE_MASK_IN_WATER);
+
+        if (QFIELD(o, oPosY) > QFIELD(o, oFloorHeight)) {
+            o->oMoveFlags |= OBJ_MOVE_IN_AIR;
+        }
+    } else {
+        o->oMoveFlags &= ~OBJ_MOVE_HIT_WALL;
+        if (cur_obj_resolve_wall_collisions()) {
+            o->oMoveFlags |= OBJ_MOVE_HIT_WALL;
+        }
+
+        cur_obj_update_floor();
+
+        if (QFIELD(o, oPosY) > QFIELD(o, oFloorHeight)) {
+            o->oMoveFlags |= OBJ_MOVE_IN_AIR;
+        }
+
+        if (cur_obj_detect_steep_floor(steepSlopeDegrees)) {
+            o->oMoveFlags |= OBJ_MOVE_HIT_WALL;
+        }
+    }
+}
+
+void cur_obj_update_floor_and_walls(void) {
+    cur_obj_update_floor_and_resolve_wall_collisions(60);
+}
+
+void cur_obj_move_standard(s16 steepSlopeAngleDegrees) {
+    q32 gravityq = QFIELD(o, oGravity);
+    q32 bouncinessq = QFIELD(o, oBounciness);
+    q32 buoyancyq = QFIELD(o, oBuoyancy);
+    q32 dragStrengthq = QFIELD(o, oDragStrength);
+    s32 careAboutEdgesAndSteepSlopes = FALSE;
+    s32 negativeSpeed = FALSE;
+
+    //! Because some objects allow these active flags to be set but don't
+    //  avoid updating when they are, we end up with "partial" updates, where
+    //  an object's internal state will be updated, but it doesn't move.
+    //  This allows numerous glitches and is typically referred to as
+    //  deactivation (though this term has a different meaning in the code).
+    //  Objects that do this will be marked with //PARTIAL_UPDATE.
+    if (!(o->activeFlags & (ACTIVE_FLAG_FAR_AWAY | ACTIVE_FLAG_IN_DIFFERENT_ROOM))) {
+        if (steepSlopeAngleDegrees < 0) {
+            // clang-format off
+            careAboutEdgesAndSteepSlopes = TRUE; steepSlopeAngleDegrees = -steepSlopeAngleDegrees;
+            // clang-format on
+        }
+
+        q32 steepSlopeNormalYq = q(coss(steepSlopeAngleDegrees * (0x10000 / 360)));
+
+        cur_obj_compute_vel_xz();
+        cur_obj_apply_drag_xzq(dragStrengthq);
+
+        cur_obj_move_xzq(steepSlopeNormalYq, careAboutEdgesAndSteepSlopes);
+        cur_obj_move_yq(gravityq, bouncinessq, buoyancyq);
+
+        if (QFIELD(o, oForwardVel) < 0) {
+            negativeSpeed = TRUE;
+        }
+        FSETFIELD(o, oForwardVel, sqrtf(sqr(FFIELD(o, oVelX)) + sqr(FFIELD(o, oVelZ))));
+        if (negativeSpeed == TRUE) {
+            QSETFIELD(o, oForwardVel, -QFIELD(o, oForwardVel));
+        }
+    }
+}
+
+static s32 cur_obj_within_12k_bounds(void) {
+    if (QFIELD(o, oPosX) < q(-12000) || q(12000) < QFIELD(o, oPosX)) {
+        return FALSE;
+    }
+
+    if (QFIELD(o, oPosY) < q(-12000) || q(12000) < QFIELD(o, oPosY)) {
+        return FALSE;
+    }
+
+    if (QFIELD(o, oPosZ) < q(-12000) || q(12000) < QFIELD(o, oPosZ)) {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+void cur_obj_move_using_vel_and_gravity(void) {
+    if (cur_obj_within_12k_bounds()) {
+        QMODFIELD(o, oPosX, += QFIELD(o, oVelX));
+        QMODFIELD(o, oPosZ, += QFIELD(o, oVelZ));
+        QMODFIELD(o, oVelY, += QFIELD(o, oGravity)); //! No terminal velocity
+        QMODFIELD(o, oPosY, += QFIELD(o, oVelY));
+    }
+}
+
+void cur_obj_move_using_fvel_and_gravity(void) {
+    cur_obj_compute_vel_xz();
+    cur_obj_move_using_vel_and_gravity(); //! No terminal velocity
+}
+
+void obj_set_pos_relative(struct Object *obj, struct Object *other, f32 dleft, f32 dy,
+                             f32 dforward) {
+    f32 facingZ = coss(other->oMoveAngleYaw);
+    f32 facingX = sins(other->oMoveAngleYaw);
+
+    f32 dz = dforward * facingZ - dleft * facingX;
+    f32 dx = dforward * facingX + dleft * facingZ;
+
+    obj->oMoveAngleYaw = other->oMoveAngleYaw;
+
+    FSETFIELD(obj, oPosX, FFIELD(other, oPosX) + dx);
+    FSETFIELD(obj, oPosY, FFIELD(other, oPosY) + dy);
+    FSETFIELD(obj, oPosZ, FFIELD(other, oPosZ) + dz);
+}
+
+s16 cur_obj_angle_to_home(void) {
+    s16 angle;
+    q32 dxq = QFIELD(o, oHomeX) - QFIELD(o, oPosX);
+    q32 dzq = QFIELD(o, oHomeZ) - QFIELD(o, oPosZ);
+
+    angle = atan2sq(dzq, dxq);
+    return angle;
+}
+
+void obj_set_gfx_pos_at_obj_pos(struct Object *obj1, struct Object *obj2) {
+    obj1->header.gfx.posi[0] = IFIELD(obj2, oPosX);
+    obj1->header.gfx.posi[1] = qtrunc(QFIELD(obj2, oPosY) + QFIELD(obj2, oGraphYOffset));
+    obj1->header.gfx.posi[2] = IFIELD(obj2, oPosZ);
+
+    obj1->header.gfx.angle[0] = obj2->oMoveAnglePitch & 0xFFFF;
+    obj1->header.gfx.angle[1] = obj2->oMoveAngleYaw & 0xFFFF;
+    obj1->header.gfx.angle[2] = obj2->oMoveAngleRoll & 0xFFFF;
+}
+
+/**
+ * Transform the vector at localTranslateIndex into the object's local
+ * coordinates, and then add it to the vector at posIndex.
+ */
+void obj_translate_local(struct Object *obj, s16 posIndex, s16 localTranslateIndex) {
+#ifdef FIXED_POINT_FIELDS
+    q32 dxq = obj->rawData.asQ32[localTranslateIndex + 0];
+    q32 dyq = obj->rawData.asQ32[localTranslateIndex + 1];
+    q32 dzq = obj->rawData.asQ32[localTranslateIndex + 2];
+
+    obj->rawData.asQ32[posIndex + 0] +=
+        qmul((q32) obj->transformq.m[0][0], dxq) + qmul((q32) obj->transformq.m[1][0], dyq) + qmul((q32) obj->transformq.m[2][0], dzq);
+    obj->rawData.asQ32[posIndex + 1] +=
+        qmul((q32) obj->transformq.m[0][1], dxq) + qmul((q32) obj->transformq.m[1][1], dyq) + qmul((q32) obj->transformq.m[2][1], dzq);
+    obj->rawData.asQ32[posIndex + 2] +=
+        qmul((q32) obj->transformq.m[0][2], dxq) + qmul((q32) obj->transformq.m[1][2], dyq) + qmul((q32) obj->transformq.m[2][2], dzq);
+#else
+    q32 dxq = q(obj->rawData.asF32[localTranslateIndex + 0]);
+    q32 dyq = q(obj->rawData.asF32[localTranslateIndex + 1]);
+    q32 dzq = q(obj->rawData.asF32[localTranslateIndex + 2]);
+
+    obj->rawData.asF32[posIndex + 0] +=
+        qtof(qmul((q32) obj->transformq.m[0][0], dxq) + qmul((q32) obj->transformq.m[1][0], dyq) + qmul((q32) obj->transformq.m[2][0], dzq));
+    obj->rawData.asF32[posIndex + 1] +=
+        qtof(qmul((q32) obj->transformq.m[0][1], dxq) + qmul((q32) obj->transformq.m[1][1], dyq) + qmul((q32) obj->transformq.m[2][1], dzq));
+    obj->rawData.asF32[posIndex + 2] +=
+        qtof(qmul((q32) obj->transformq.m[0][2], dxq) + qmul((q32) obj->transformq.m[1][2], dyq) + qmul((q32) obj->transformq.m[2][2], dzq));
+#endif
+}
+
+void obj_build_transform_from_pos_and_angle(struct Object *obj, s16 posIndex, s16 angleIndex) {
+    s16 translate[3];
+    s16 rotation[3];
+
+    translate[0] = qtrunc(obj->rawData.asQ32[posIndex + 0]);
+    translate[1] = qtrunc(obj->rawData.asQ32[posIndex + 1]);
+    translate[2] = qtrunc(obj->rawData.asQ32[posIndex + 2]);
+
+    rotation[0] = obj->rawData.asS32[angleIndex + 0];
+    rotation[1] = obj->rawData.asS32[angleIndex + 1];
+    rotation[2] = obj->rawData.asS32[angleIndex + 2];
+
+    obj->transformq = mtx_rotation_zxy_and_translation(translate, rotation);
+}
+
+void obj_set_throw_matrix_from_transform(struct Object *obj) {
+    if (obj->oFlags & OBJ_FLAG_0020) {
+        obj_build_transform_from_pos_and_angle(obj, O_POS_INDEX, O_FACE_ANGLE_INDEX);
+        obj_apply_scale_to_transform(obj);
+    }
+
+    obj->header.gfx.throwMatrixq = &obj->transformq;
+
+    //! Sets scale of gCurrentObject instead of obj. Not exploitable since this
+    //  function is only called with obj = gCurrentObject
+    cur_obj_scaleq(q(1.0f));
+}
+
+void obj_build_transform_relative_to_parent(struct Object *obj) {
+    struct Object *parent = obj->parentObj;
+
+    obj_build_transform_from_pos_and_angle(obj, O_PARENT_RELATIVE_POS_INDEX, O_FACE_ANGLE_INDEX);
+    obj_apply_scale_to_transform(obj);
+    obj->transformq = mtx_mul(&obj->transformq, &parent->transformq);
+
+    ISETFIELD(obj, oPosX, obj->transformq.t[0]);
+    ISETFIELD(obj, oPosY, obj->transformq.t[1]);
+    ISETFIELD(obj, oPosZ, obj->transformq.t[2]);
+
+	// TODO
+    //obj->header.gfx.throwMatrix = &obj->transform;
+
+    //! Sets scale of gCurrentObject instead of obj. Not exploitable since this
+    //  function is only called with obj = gCurrentObject
+    cur_obj_scaleq(q(1.0f));
+}
+
+void obj_create_transform_from_self(struct Object *obj) {
+    obj->oFlags &= ~OBJ_FLAG_TRANSFORM_RELATIVE_TO_PARENT;
+    obj->oFlags |= OBJ_FLAG_SET_THROW_MATRIX_FROM_TRANSFORM;
+
+    obj->transformq.t[0] = IFIELD(obj, oPosX);
+    obj->transformq.t[1] = IFIELD(obj, oPosY);
+    obj->transformq.t[2] = IFIELD(obj, oPosZ);
+}
+
+void cur_obj_rotate_move_angle_using_vel(void) {
+    o->oMoveAnglePitch += o->oAngleVelPitch;
+    o->oMoveAngleYaw += o->oAngleVelYaw;
+    o->oMoveAngleRoll += o->oAngleVelRoll;
+}
+
+void cur_obj_rotate_face_angle_using_vel(void) {
+    o->oFaceAnglePitch += o->oAngleVelPitch;
+    o->oFaceAngleYaw += o->oAngleVelYaw;
+    o->oFaceAngleRoll += o->oAngleVelRoll;
+}
+
+void cur_obj_set_face_angle_to_move_angle(void) {
+    o->oFaceAnglePitch = o->oMoveAnglePitch;
+    o->oFaceAngleYaw = o->oMoveAngleYaw;
+    o->oFaceAngleRoll = o->oMoveAngleRoll;
+}
+
+s32 cur_obj_follow_path(UNUSED s32 unusedArg) {
+    struct Waypoint *startWaypoint;
+    struct Waypoint *lastWaypoint;
+    struct Waypoint *targetWaypoint;
+    s32 prevToNextXi, prevToNextYi, prevToNextZi;
+    s32 objToNextXZi;
+    s32 objToNextXi, objToNextYi, objToNextZi;
+
+    if (o->oPathedPrevWaypointFlags == 0) {
+        o->oPathedPrevWaypoint = o->oPathedStartWaypoint;
+        o->oPathedPrevWaypointFlags = WAYPOINT_FLAGS_INITIALIZED;
+    }
+
+    startWaypoint = o->oPathedStartWaypoint;
+    lastWaypoint = o->oPathedPrevWaypoint;
+
+    if ((lastWaypoint + 1)->flags != WAYPOINT_FLAGS_END) {
+        targetWaypoint = lastWaypoint + 1;
+    } else {
+        targetWaypoint = startWaypoint;
+    }
+
+    o->oPathedPrevWaypointFlags = lastWaypoint->flags | WAYPOINT_FLAGS_INITIALIZED;
+
+    prevToNextXi = targetWaypoint->pos[0] - lastWaypoint->pos[0];
+    prevToNextYi = targetWaypoint->pos[1] - lastWaypoint->pos[1];
+    prevToNextZi = targetWaypoint->pos[2] - lastWaypoint->pos[2];
+
+    objToNextXi = targetWaypoint->pos[0] - IFIELD(o, oPosX);
+    objToNextYi = targetWaypoint->pos[1] - IFIELD(o, oPosY);
+    objToNextZi = targetWaypoint->pos[2] - IFIELD(o, oPosZ);
+    objToNextXZi = sqrtu(sqr(objToNextXi) + sqr(objToNextZi));
+
+    o->oPathedTargetYaw = atan2sq(objToNextZi, objToNextXi);
+    o->oPathedTargetPitch = atan2sq(objToNextXZi, -objToNextYi);
+
+    // If dot(prevToNext, objToNext) <= 0 (i.e. reached other side of target waypoint)
+    if (prevToNextXi * objToNextXi + prevToNextYi * objToNextYi + prevToNextZi * objToNextZi <= 0) {
+        o->oPathedPrevWaypoint = targetWaypoint;
+        if ((targetWaypoint + 1)->flags == WAYPOINT_FLAGS_END) {
+            return PATH_REACHED_END;
+        } else {
+            return PATH_REACHED_WAYPOINT;
+        }
+    }
+
+    return PATH_NONE;
+}
+
+void chain_segment_init(struct ChainSegment *segment) {
+    segment->posX = 0.0f;
+    segment->posY = 0.0f;
+    segment->posZ = 0.0f;
+
+    segment->pitch = 0;
+    segment->yaw = 0;
+    segment->roll = 0;
+}
+
+f32 random_f32_around_zero(f32 diameter) {
+    return random_float() * diameter - diameter / 2;
+}
+
+s16 random_s16_around_zero(s16 diameter) {
+    return random_u16() % diameter - diameter / 2;
+}
+
+void obj_scale_randomq(struct Object *obj, q32 rangeLengthq, q32 minScaleq) {
+    q32 scaleq = qmul(random_q32(), rangeLengthq) + minScaleq;
+    obj_scale_xyzq(obj, scaleq, scaleq, scaleq);
+}
+
+void obj_translate_xyz_random(struct Object *obj, f32 rangeLength) {
+    FMODFIELD(obj, oPosX, += random_float() * rangeLength - rangeLength * 0.5f);
+    FMODFIELD(obj, oPosY, += random_float() * rangeLength - rangeLength * 0.5f);
+    FMODFIELD(obj, oPosZ, += random_float() * rangeLength - rangeLength * 0.5f);
+}
+
+void obj_translate_xz_random(struct Object *obj, f32 rangeLength) {
+    FMODFIELD(obj, oPosX, += random_float() * rangeLength - rangeLength * 0.5f);
+    FMODFIELD(obj, oPosZ, += random_float() * rangeLength - rangeLength * 0.5f);
+}
+
+static void obj_build_vel_from_transform(struct Object *obj) {
+    q32 upq = QFIELD(obj, oUpVel);
+    q32 leftq = QFIELD(obj, oLeftVel);
+    q32 forwardq = QFIELD(obj, oForwardVel);
+
+    //! Typo, up and left should be swapped
+    QSETFIELD(obj, oVelX, qmul((q32) obj->transformq.m[0][0], leftq) + qmul((q32) obj->transformq.m[1][0], upq) + qmul((q32) obj->transformq.m[2][0], forwardq));
+    QSETFIELD(obj, oVelY, qmul((q32) obj->transformq.m[0][1], leftq) + qmul((q32) obj->transformq.m[1][1], upq) + qmul((q32) obj->transformq.m[2][1], forwardq));
+    QSETFIELD(obj, oVelZ, qmul((q32) obj->transformq.m[0][2], leftq) + qmul((q32) obj->transformq.m[1][2], upq) + qmul((q32) obj->transformq.m[2][2], forwardq));
+}
+
+void cur_obj_set_pos_via_transform(void) {
+    obj_build_transform_from_pos_and_angle(o, O_PARENT_RELATIVE_POS_INDEX, O_MOVE_ANGLE_INDEX);
+    obj_build_vel_from_transform(o);
+    QMODFIELD(o, oPosX, += QFIELD(o, oVelX));
+    QMODFIELD(o, oPosY, += QFIELD(o, oVelY));
+    QMODFIELD(o, oPosZ, += QFIELD(o, oVelZ));
+}
+
+s16 cur_obj_reflect_move_angle_off_wall(void) {
+    s16 angle = o->oWallAngle - ((s16) o->oMoveAngleYaw - (s16) o->oWallAngle) + 0x8000;
+    return angle;
+}
+
+void cur_obj_spawn_particles(struct SpawnParticlesInfo *info) {
+    struct Object *particle;
+    s32 i;
+    s32 numParticles = info->count;
+
+    // If there are a lot of objects already, limit the number of particles
+    if ((gPrevFrameObjectCount > (OBJECT_POOL_CAPACITY - 90)) && numParticles > 10) {
+        numParticles = 10;
+    }
+
+    // We're close to running out of object slots, so don't spawn particles at
+    // all
+    if (gPrevFrameObjectCount > (OBJECT_POOL_CAPACITY - 30)) {
+        numParticles = 0;
+    }
+
+    for (i = 0; i < numParticles; i++) {
+        q32 scaleq = qmul(random_q32(), q(info->sizeRange) / 10) + q(info->sizeBase) / 10;
+
+        particle = spawn_object(o, info->model, bhvWhitePuffExplosion);
+
+        particle->oBehParams2ndByte = info->behParam;
+        particle->oMoveAngleYaw = random_u16();
+        ISETFIELD(particle, oGravity, info->gravity);
+        ISETFIELD(particle, oDragStrength, info->dragStrength);
+
+        QMODFIELD(particle, oPosY, += q(info->offsetY));
+        QSETFIELD(particle, oForwardVel, random_q32() * info->forwardVelRange + q(info->forwardVelBase));
+        QSETFIELD(particle, oVelY, random_q32() * info->velYRange + q(info->velYBase));
+
+        obj_scale_xyzq(particle, scaleq, scaleq, scaleq);
+    }
+}
+
+void obj_set_hitbox(struct Object *obj, struct ObjectHitbox *hitbox) {
+    if (!(obj->oFlags & OBJ_FLAG_30)) {
+        obj->oFlags |= OBJ_FLAG_30;
+
+        obj->oInteractType = hitbox->interactType;
+        obj->oDamageOrCoinValue = hitbox->damageOrCoinValue;
+        obj->oHealth = hitbox->health;
+        obj->oNumLootCoins = hitbox->numLootCoins;
+
+        cur_obj_become_tangible();
+    }
+
+    obj->hitboxRadius_s16 = qtrunc(obj->header.gfx.scaleq[0] * hitbox->radius);
+    obj->hitboxHeight_s16 = qtrunc(obj->header.gfx.scaleq[1] * hitbox->height);
+    obj->hurtboxRadius_s16 = qtrunc(obj->header.gfx.scaleq[0] * hitbox->hurtboxRadius);
+    obj->hurtboxHeight_s16 = qtrunc(obj->header.gfx.scaleq[1] * hitbox->hurtboxHeight);
+    obj->hitboxDownOffset_s16 = qtrunc(obj->header.gfx.scaleq[1] * hitbox->downOffset);
+}
+
+s32 signum_positive(s32 x) {
+    if (x >= 0) {
+        return 1;
+    } else {
+        return -1;
+    }
+}
+
+f32 absf(f32 x) {
+	union {f32 f; u32 u;} decomposed = {.f = x};
+	decomposed.u &= 0x7FFFFFFF;
+    return decomposed.f;
+}
+
+s32 absi(s32 x) {
+    if (x >= 0) {
+        return x;
+    } else {
+        return -x;
+    }
+}
+
+s32 cur_obj_wait_then_blink(s32 timeUntilBlinking, s32 numBlinks) {
+    s32 done = FALSE;
+    s32 timeBlinking;
+
+    if (o->oTimer >= timeUntilBlinking) {
+        if ((timeBlinking = o->oTimer - timeUntilBlinking) % 2 != 0) {
+            o->header.gfx.node.flags |= GRAPH_RENDER_INVISIBLE;
+            if (timeBlinking / 2 > numBlinks) {
+                done = TRUE;
+            }
+        } else {
+            o->header.gfx.node.flags &= ~GRAPH_RENDER_INVISIBLE;
+        }
+    }
+
+    return done;
+}
+
+s32 cur_obj_is_mario_ground_pounding_platform(void) {
+    if (gMarioObject->platform == o) {
+        if (gMarioStates[0].action == ACT_GROUND_POUND_LAND) {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+void spawn_mist_particles(void) {
+    spawn_mist_particles_variable(0, 0, 46.0f);
+}
+
+void spawn_mist_particles_with_sound(u32 sp18) {
+    spawn_mist_particles_variable(0, 0, 46.0f);
+    create_sound_spawner(sp18);
+}
+
+void cur_obj_push_mario_away(s32 radiusi) {
+    s32 marioRelXi = IFIELD(gMarioObject, oPosX) - IFIELD(o, oPosX);
+    s32 marioRelZi = IFIELD(gMarioObject, oPosZ) - IFIELD(o, oPosZ);
+    s32 marioDisti = sqrtu(sqr(marioRelXi) + sqr(marioRelZi));
+
+    if (marioDisti < radiusi) {
+        //! If this function pushes Mario out of bounds, it will trigger Mario's
+        //  oob failsafe
+        gMarioStates[0].pos[0] += (radiusi - marioDisti) * marioRelXi / radiusi;
+        gMarioStates[0].pos[2] += (radiusi - marioDisti) * marioRelZi / radiusi;
+    }
+}
+
+void cur_obj_push_mario_away_from_cylinder(s32 radiusi, s32 extentYi) {
+    s32 marioRelYi = IFIELD(gMarioObject, oPosY) - IFIELD(o, oPosY);
+
+    if (marioRelYi < 0) {
+        marioRelYi = -marioRelYi;
+    }
+
+    if (marioRelYi < extentYi) {
+        cur_obj_push_mario_away(radiusi);
+    }
+}
+
+void bhv_dust_smoke_loop(void) {
+    QMODFIELD(o, oPosX, += QFIELD(o, oVelX));
+    QMODFIELD(o, oPosY, += QFIELD(o, oVelY));
+    QMODFIELD(o, oPosZ, += QFIELD(o, oVelZ));
+
+    if (o->oSmokeTimer == 10) {
+        obj_mark_for_deletion(o);
+    }
+
+    o->oSmokeTimer++;
+}
+
+s32 cur_obj_set_direction_table(s8 *a0) {
+    o->oToxBoxMovementPattern = a0;
+    o->oToxBoxMovementStep = 0;
+
+    return *(s8 *) o->oToxBoxMovementPattern;
+}
+
+s32 cur_obj_progress_direction_table(void) {
+    s8 spF;
+    s8 *sp8 = o->oToxBoxMovementPattern;
+    s32 sp4 = o->oToxBoxMovementStep + 1;
+
+    if (sp8[sp4] != -1) {
+        spF = sp8[sp4];
+        o->oToxBoxMovementStep++;
+    } else {
+        spF = sp8[0];
+        o->oToxBoxMovementStep = 0;
+    }
+
+    return spF;
+}
+
+void cur_obj_scale_over_time(s32 a0, s32 a1, f32 sp10, f32 sp14) {
+    f32 sp4 = sp14 - sp10;
+    f32 sp0 = (f32) o->oTimer / a1;
+
+    if (a0 & 0x01) {
+        o->header.gfx.scaleq[0] = q(sp4 * sp0 + sp10);
+    }
+
+    if (a0 & 0x02) {
+        o->header.gfx.scaleq[1] = q(sp4 * sp0 + sp10);
+    }
+
+    if (a0 & 0x04) {
+        o->header.gfx.scaleq[2] = q(sp4 * sp0 + sp10);
+    }
+}
+
+void cur_obj_set_pos_to_home_with_debug(void) {
+    QSETFIELD(o, oPosX, QFIELD(o, oHomeX) + q(gDebugInfo[5][0]));
+    QSETFIELD(o, oPosY, QFIELD(o, oHomeY) + q(gDebugInfo[5][1]));
+    QSETFIELD(o, oPosZ, QFIELD(o, oHomeZ) + q(gDebugInfo[5][2]));
+    cur_obj_scaleq(ONE + q(gDebugInfo[5][3]) / 100);
+}
+
+s32 cur_obj_is_mario_on_platform(void) {
+    if (gMarioObject->platform == o) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+s32 cur_obj_shake_y_until(s32 cycles, s32 amount) {
+    if (o->oTimer % 2 != 0) {
+        QMODFIELD(o, oPosY, -= q(amount));
+    } else {
+        QMODFIELD(o, oPosY, += q(amount));
+    }
+
+    if (o->oTimer == cycles * 2) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+s32 jiggle_bbh_stair(s32 a0) {
+    if (a0 >= 4 || a0 < 0) {
+        return TRUE;
+    }
+
+    QMODFIELD(o, oPosY, += q(sBbhStairJiggleOffsets[a0]));
+    return FALSE;
+}
+
+void cur_obj_call_action_function(void (*actionFunctions[])(void)) {
+    void (*actionFunction)(void) = actionFunctions[o->oAction];
+    actionFunction();
+}
+
+static struct Object *spawn_star_with_no_lvl_exit(s32 sp20, s32 sp24) {
+    struct Object *sp1C = spawn_object(o, MODEL_STAR, bhvSpawnedStarNoLevelExit);
+    sp1C->oSparkleSpawnUnk1B0 = sp24;
+    sp1C->oBehParams = o->oBehParams;
+    sp1C->oBehParams2ndByte = sp20;
+
+    return sp1C;
+}
+
+// old unused initializer for 2d star spawn behavior.
+// uses behavior parameters not used in the current sparkle code.
+void spawn_base_star_with_no_lvl_exit(void) {
+    spawn_star_with_no_lvl_exit(0, 0);
+}
+
+s32 bit_shift_left(s32 a0) {
+    return sPowersOfTwo[a0];
+}
+
+s32 cur_obj_mario_far_away(void) {
+    f32 dx = FFIELD(o, oHomeX) - FFIELD(gMarioObject, oPosX);
+    f32 dy = FFIELD(o, oHomeY) - FFIELD(gMarioObject, oPosY);
+    f32 dz = FFIELD(o, oHomeZ) - FFIELD(gMarioObject, oPosZ);
+    f32 marioDistToHome = sqrtf(dx * dx + dy * dy + dz * dz);
+
+    if (QFIELD(o, oDistanceToMario) > q(2000) && marioDistToHome > 2000.0f) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+s32 is_mario_moving_fast_or_in_air(s32 speedThreshold) {
+    if (gMarioStates[0].forwardVel > speedThreshold) {
+        return TRUE;
+    }
+
+    if (gMarioStates[0].action & ACT_FLAG_AIR) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+s32 is_item_in_array(s8 item, s8 *array) {
+    while (*array != -1) {
+        if (*array == item) {
+            return TRUE;
+        }
+
+        array++;
+    }
+
+    return FALSE;
+}
+
+UNUSED static void stub_obj_helpers_5(void) {
+}
+
+void bhv_init_room(void) {
+    struct Surface *floor;
+    f32 floorHeight;
+
+    if (is_item_in_array(gCurrLevelNum, sLevelsWithRooms)) {
+        floorHeight = qtof(find_floorq(QFIELD(o, oPosX), QFIELD(o, oPosY), QFIELD(o, oPosZ), &floor));
+
+        if (floor != NULL) {
+            if (floor->room != 0) {
+                o->oRoom = floor->room;
+            } else {
+                // Floor probably belongs to a platform object. Try looking
+                // underneath it
+                find_floorq(QFIELD(o, oPosX), q(floorHeight) - q(100), QFIELD(o, oPosZ), &floor);
+                if (floor != NULL) {
+                    //! Technically possible that the room could still be 0 here
+                    o->oRoom = floor->room;
+                }
+            }
+        }
+    } else {
+        o->oRoom = -1;
+    }
+}
+
+void cur_obj_enable_rendering_if_mario_in_room(void) {
+    register s32 marioInRoom;
+
+    if (o->oRoom != -1 && gMarioCurrentRoom != 0) {
+        if (gMarioCurrentRoom == o->oRoom) {
+            marioInRoom = TRUE;
+        } else if (gDoorAdjacentRooms[gMarioCurrentRoom][0] == o->oRoom) {
+            marioInRoom = TRUE;
+        } else if (gDoorAdjacentRooms[gMarioCurrentRoom][1] == o->oRoom) {
+            marioInRoom = TRUE;
+        } else {
+            marioInRoom = FALSE;
+        }
+
+        if (marioInRoom) {
+            cur_obj_enable_rendering();
+            o->activeFlags &= ~ACTIVE_FLAG_IN_DIFFERENT_ROOM;
+            gNumRoomedObjectsInMarioRoom++;
+        } else {
+            cur_obj_disable_rendering();
+            o->activeFlags |= ACTIVE_FLAG_IN_DIFFERENT_ROOM;
+            gNumRoomedObjectsNotInMarioRoom++;
+        }
+    }
+}
+
+s32 cur_obj_set_hitbox_and_die_if_attacked(struct ObjectHitbox *hitbox, s32 deathSound, s32 noLootCoins) {
+    s32 interacted = FALSE;
+
+    obj_set_hitbox(o, hitbox);
+
+    if (noLootCoins) {
+        o->oNumLootCoins = 0;
+    }
+
+    if (o->oInteractStatus & INT_STATUS_INTERACTED) {
+        if (o->oInteractStatus & INT_STATUS_WAS_ATTACKED) {
+            spawn_mist_particles();
+            obj_spawn_loot_yellow_coins(o, o->oNumLootCoins, 20.0f);
+            obj_mark_for_deletion(o);
+            create_sound_spawner(deathSound);
+        } else {
+            interacted = TRUE;
+        }
+    }
+
+    o->oInteractStatus = 0;
+    return interacted;
+}
+
+
+void obj_explode_and_spawn_coins(f32 sp18, s32 sp1C) {
+    spawn_mist_particles_variable(0, 0, sp18);
+    spawn_triangle_break_particles(30, MODEL_DIRT_ANIMATION, 3.0f, 4);
+    obj_mark_for_deletion(o);
+
+    if (sp1C == 1) {
+        obj_spawn_loot_yellow_coins(o, o->oNumLootCoins, 20.0f);
+    } else if (sp1C == 2) {
+        obj_spawn_loot_blue_coins(o, o->oNumLootCoins, 20.0f, 150);
+    }
+}
+
+void obj_set_collision_data(struct Object *obj, const void *segAddr) {
+    obj->collisionData = segmented_to_virtual(segAddr);
+}
+
+void cur_obj_if_hit_wall_bounce_away(void) {
+    if (o->oMoveFlags & OBJ_MOVE_HIT_WALL) {
+        o->oMoveAngleYaw = o->oWallAngle;
+    }
+}
+
+s32 cur_obj_hide_if_mario_far_away_yq(q32 distYq) {
+    if (ABS(QFIELD(o, oPosY) - QFIELD(gMarioObject, oPosY)) < distYq) {
+        cur_obj_unhide();
+        return FALSE;
+    } else {
+        cur_obj_hide();
+        return TRUE;
+    }
+}
+
+Gfx *geo_offset_klepto_held_object(s32 callContext, struct GraphNode *node, UNUSED const ShortMatrix* mtxq) {
+    if (callContext == GEO_CONTEXT_RENDER) {
+        ((struct GraphNodeTranslationRotation *) node->next)->translation[0] = 300;
+        ((struct GraphNodeTranslationRotation *) node->next)->translation[1] = 300;
+        ((struct GraphNodeTranslationRotation *) node->next)->translation[2] = 0;
+    }
+
+    return NULL;
+}
+
+s32 geo_offset_klepto_debug(s32 callContext, struct GraphNode *a1, UNUSED s32 sp8) {
+    if (callContext == GEO_CONTEXT_RENDER) {
+        ((struct GraphNode_802A45E4 *) a1->next)->unk18 = gDebugInfo[4][0];
+        ((struct GraphNode_802A45E4 *) a1->next)->unk1A = gDebugInfo[4][1];
+        ((struct GraphNode_802A45E4 *) a1->next)->unk1C = gDebugInfo[4][2];
+        ((struct GraphNode_802A45E4 *) a1->next)->unk1E = gDebugInfo[4][3];
+        ((struct GraphNode_802A45E4 *) a1->next)->unk20 = gDebugInfo[4][4];
+        ((struct GraphNode_802A45E4 *) a1->next)->unk22 = gDebugInfo[4][5];
+    }
+
+    return 0;
+}
+
+s32 obj_is_hidden(struct Object *obj) {
+    if (obj->header.gfx.node.flags & GRAPH_RENDER_INVISIBLE) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+void enable_time_stop(void) {
+    gTimeStopState |= TIME_STOP_ENABLED;
+}
+
+void disable_time_stop(void) {
+    gTimeStopState &= ~TIME_STOP_ENABLED;
+}
+
+void set_time_stop_flags(s32 flags) {
+    gTimeStopState |= flags;
+}
+
+void clear_time_stop_flags(s32 flags) {
+    gTimeStopState = gTimeStopState & (flags ^ 0xFFFFFFFF);
+}
+
+s32 cur_obj_can_mario_activate_textbox(f32 radius, f32 height, UNUSED s32 unused) {
+    if (QFIELD(o, oDistanceToMario) < q(1500)) {
+        q32 latDistToMarioq = lateral_dist_between_objectsq(o, gMarioObject);
+        //UNUSED s16 angleFromMario = obj_angle_to_object(gMarioObject, o);
+
+        if (latDistToMarioq < q(radius) && QFIELD(o, oPosY) < QFIELD(gMarioObject, oPosY) + q(160)
+            && QFIELD(gMarioObject, oPosY) < QFIELD(o, oPosY) + q(height) && !(gMarioStates[0].action & ACT_FLAG_AIR)
+            && mario_ready_to_speak()) {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+s32 cur_obj_can_mario_activate_textbox_2(f32 radius, f32 height) {
+    // The last argument here is unused. When this function is called directly the argument is always set to 0x7FFF.
+    return cur_obj_can_mario_activate_textbox(radius, height, 0x1000);
+}
+
+static void cur_obj_end_dialog(s32 dialogFlags, s32 dialogResult) {
+    o->oDialogResponse = dialogResult;
+    o->oDialogState++;
+
+    if (!(dialogFlags & DIALOG_FLAG_TIME_STOP_ENABLED)) {
+        set_mario_npc_dialog(MARIO_DIALOG_STOP);
+    }
+}
+
+s32 cur_obj_update_dialog(s32 actionArg, s32 dialogFlags, s32 dialogID, UNUSED s32 unused) {
+    s32 dialogResponse = DIALOG_RESPONSE_NONE;
+    UNUSED s32 doneTurning = TRUE;
+
+    switch (o->oDialogState) {
+#if BUGFIX_DIALOG_TIME_STOP
+        case DIALOG_STATUS_ENABLE_TIME_STOP:
+            // Patched :(
+            // Wait for Mario to be ready to speak, and then enable time stop
+            if (mario_ready_to_speak() || gMarioState->action == ACT_READING_NPC_DIALOG) {
+                gTimeStopState |= TIME_STOP_ENABLED;
+                o->activeFlags |= ACTIVE_FLAG_INITIATED_TIME_STOP;
+                o->oDialogState++;
+            } else {
+                break;
+            }
+            // Fall through so that Mario's action is interrupted immediately
+            // after time is stopped
+#else
+        case DIALOG_STATUS_ENABLE_TIME_STOP:
+            //! We enable time stop even if Mario is not ready to speak. This
+            //  allows us to move during time stop as long as Mario never enters
+            //  an action that can be interrupted with text.
+            if (gMarioState->health >= 0x100) {
+                gTimeStopState |= TIME_STOP_ENABLED;
+                o->activeFlags |= ACTIVE_FLAG_INITIATED_TIME_STOP;
+                o->oDialogState++;
+            }
+            break;
+#endif
+        case DIALOG_STATUS_INTERRUPT:
+            // Interrupt until Mario is actually speaking with the NPC
+            if (set_mario_npc_dialog(actionArg) == MARIO_DIALOG_STATUS_SPEAK) {
+                o->oDialogState++;
+            }
+            break;
+
+        case DIALOG_STATUS_START_DIALOG:
+            // Starts dialog, depending of the flag defined, it calls
+            // a default dialog or a dialog with response.
+            if (dialogFlags & DIALOG_FLAG_TEXT_RESPONSE) {
+                create_dialog_box_with_response(dialogID);
+            } else if (dialogFlags & DIALOG_FLAG_TEXT_DEFAULT) {
+                create_dialog_box(dialogID);
+            }
+            o->oDialogState++;
+            break;
+
+        case DIALOG_STATUS_STOP_DIALOG:
+            // Stops dialog, if the flag dialog response was called
+            // then it defines the value to let the object do the rest.
+            if (dialogFlags & DIALOG_FLAG_TEXT_RESPONSE) {
+                if (gDialogResponse != DIALOG_RESPONSE_NONE) {
+                    cur_obj_end_dialog(dialogFlags, gDialogResponse);
+                }
+            } else if (dialogFlags & DIALOG_FLAG_TEXT_DEFAULT) {
+                if (get_dialog_id() == DIALOG_NONE) {
+                    cur_obj_end_dialog(dialogFlags, DIALOG_RESPONSE_NOT_DEFINED);
+                }
+            } else {
+                cur_obj_end_dialog(dialogFlags, DIALOG_RESPONSE_NOT_DEFINED);
+            }
+            break;
+
+        case DIALOG_STATUS_DISABLE_TIME_STOP:
+            // We disable time stop for a few seconds when Mario is no longer
+            // speaking or the flag is defined, then we enable it again.
+            // Usually, an object disables time stop using a separate function
+            // after a certain condition is met.
+            if (gMarioState->action != ACT_READING_NPC_DIALOG || (dialogFlags & DIALOG_FLAG_TIME_STOP_ENABLED)) {
+                gTimeStopState &= ~TIME_STOP_ENABLED;
+                o->activeFlags &= ~ACTIVE_FLAG_INITIATED_TIME_STOP;
+                dialogResponse = o->oDialogResponse;
+                o->oDialogState = DIALOG_STATUS_ENABLE_TIME_STOP;
+            }
+            break;
+
+        default:
+            o->oDialogState = DIALOG_STATUS_ENABLE_TIME_STOP;
+            break;
+    }
+
+    return dialogResponse;
+}
+
+s32 cur_obj_update_dialog_with_cutscene(s32 actionArg, s32 dialogFlags, s32 cutsceneTable, s32 dialogID) {
+    s32 dialogResponse = DIALOG_RESPONSE_NONE;
+    s32 doneTurning = TRUE;
+
+    switch (o->oDialogState) {
+#if BUGFIX_DIALOG_TIME_STOP
+        case DIALOG_STATUS_ENABLE_TIME_STOP:
+            // Wait for Mario to be ready to speak, and then enable time stop
+            if (mario_ready_to_speak() || gMarioState->action == ACT_READING_NPC_DIALOG) {
+                gTimeStopState |= TIME_STOP_ENABLED;
+                o->activeFlags |= ACTIVE_FLAG_INITIATED_TIME_STOP;
+                o->oDialogState++;
+                o->oDialogResponse = DIALOG_RESPONSE_NONE;
+            } else {
+                break;
+            }
+            // Fall through so that Mario's action is interrupted immediately
+            // after time is stopped
+#else
+        case DIALOG_STATUS_ENABLE_TIME_STOP:
+            //! We enable time stop even if Mario is not ready to speak. This
+            //  allows us to move during time stop as long as Mario never enters
+            //  an action that can be interrupted with text.
+            if (gMarioState->health >= 0x0100) {
+                gTimeStopState |= TIME_STOP_ENABLED;
+                o->activeFlags |= ACTIVE_FLAG_INITIATED_TIME_STOP;
+                o->oDialogState++;
+                o->oDialogResponse = DIALOG_RESPONSE_NONE;
+            }
+            break;
+#endif
+        case DIALOG_STATUS_INTERRUPT:
+            // Additional flag that makes the NPC rotate towards to Mario
+            if (dialogFlags & DIALOG_FLAG_TURN_TO_MARIO) {
+                doneTurning = cur_obj_rotate_yaw_toward(obj_angle_to_object(o, gMarioObject), 0x800);
+                // Failsafe just in case it takes more than 33 frames somehow
+                if (o->oDialogResponse >= 33) {
+                    doneTurning = TRUE;
+                }
+            }
+            // Interrupt status until Mario is actually speaking with the NPC and if the
+            // object is done turning to Mario
+            if (set_mario_npc_dialog(actionArg) == MARIO_DIALOG_STATUS_SPEAK && doneTurning) {
+                o->oDialogResponse = 0;
+                o->oDialogState++;
+            } else {
+                o->oDialogResponse++; // treated as a timer for the failsafe
+            }
+            break;
+
+        case DIALOG_STATUS_START_DIALOG:
+            // Special check for Cap Switch cutscene since the cutscene itself
+            // handles what dialog should use
+            if (cutsceneTable == CUTSCENE_CAP_SWITCH_PRESS) {
+                if ((o->oDialogResponse = cutscene_object_without_dialog(cutsceneTable, o))) {
+                    o->oDialogState++;
+                }
+            } else {
+                // General dialog cutscene function, most of the time
+                // the "CUTSCENE_DIALOG" cutscene is called
+                if ((o->oDialogResponse = cutscene_object_with_dialog(cutsceneTable, o, dialogID))) {
+                    o->oDialogState++;
+                }
+            }
+            break;
+
+        case DIALOG_STATUS_STOP_DIALOG:
+            // If flag defined, keep time stop enabled until the object
+            // decided to disable it independently
+            if (dialogFlags & DIALOG_FLAG_TIME_STOP_ENABLED) {
+                dialogResponse = o->oDialogResponse;
+                o->oDialogState = DIALOG_STATUS_ENABLE_TIME_STOP;
+            } else if (gMarioState->action != ACT_READING_NPC_DIALOG) {
+                // Disable time stop, then enable time stop for a frame
+                // until the set_mario_npc_dialog function disables it
+                gTimeStopState &= ~TIME_STOP_ENABLED;
+                o->activeFlags &= ~ACTIVE_FLAG_INITIATED_TIME_STOP;
+                dialogResponse = o->oDialogResponse;
+                o->oDialogState = DIALOG_STATUS_ENABLE_TIME_STOP;
+            } else {
+                // And finally stop Mario dialog status
+                set_mario_npc_dialog(MARIO_DIALOG_STOP);
+            }
+            break;
+    }
+
+    return dialogResponse;
+}
+
+s32 cur_obj_has_model(u16 modelID) {
+    if (o->header.gfx.sharedChild == gLoadedGraphNodes[modelID]) {
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+void cur_obj_align_gfx_with_floor(void) {
+    struct Surface *floor;
+    Vec3q floorNormalq;
+    Vec3q positionq;
+
+    positionq[0] = QFIELD(o, oPosX);
+    positionq[1] = QFIELD(o, oPosY);
+    positionq[2] = QFIELD(o, oPosZ);
+
+    find_floorq(positionq[0], positionq[1], positionq[2], &floor);
+    if (floor != NULL) {
+        floorNormalq[0] = (q32) floor->compressed_normal.x * QONE / COMPRESSED_NORMAL_ONE;
+        floorNormalq[1] = (q32) floor->compressed_normal.y * QONE / COMPRESSED_NORMAL_ONE;
+        floorNormalq[2] = (q32) floor->compressed_normal.z * QONE / COMPRESSED_NORMAL_ONE;
+
+        mtx_align_terrain_normal(&o->transformq, floorNormalq, positionq, o->oFaceAngleYaw);
+		// TODO
+        //o->header.gfx.throwMatrix = &o->transform;
+    }
+}
+
+s32 mario_is_within_rectangle(s16 minX, s16 maxX, s16 minZ, s16 maxZ) {
+    if (IFIELD(gMarioObject, oPosX) < minX || maxX < IFIELD(gMarioObject, oPosX)) {
+        return FALSE;
+    }
+
+    if (IFIELD(gMarioObject, oPosZ) < minZ || maxZ < IFIELD(gMarioObject, oPosZ)) {
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+void cur_obj_shake_screen(s32 shake) {
+    set_camera_shake_from_pointq(shake, QFIELD(o, oPosX), QFIELD(o, oPosY), QFIELD(o, oPosZ));
+}
+
+s32 obj_attack_collided_from_other_object(struct Object *obj) {
+    s32 numCollidedObjs;
+    struct Object *other;
+    s32 touchedOtherObject = FALSE;
+
+    numCollidedObjs = obj->numCollidedObjs;
+    if (numCollidedObjs != 0) {
+        other = obj->collidedObjs[0];
+
+        if (other != gMarioObject) {
+            other->oInteractStatus |= ATTACK_PUNCH | INT_STATUS_WAS_ATTACKED | INT_STATUS_INTERACTED
+                                      | INT_STATUS_TOUCHED_BOB_OMB;
+            touchedOtherObject = TRUE;
+        }
+    }
+
+    return touchedOtherObject;
+}
+
+s32 cur_obj_was_attacked_or_ground_pounded(void) {
+    s32 attacked = FALSE;
+
+    if ((o->oInteractStatus & INT_STATUS_INTERACTED)
+        && (o->oInteractStatus & INT_STATUS_WAS_ATTACKED)) {
+        attacked = TRUE;
+    }
+
+    if (cur_obj_is_mario_ground_pounding_platform()) {
+        attacked = TRUE;
+    }
+
+    o->oInteractStatus = 0;
+    return attacked;
+}
+
+void obj_copy_behavior_params(struct Object *dst, struct Object *src) {
+    dst->oBehParams = src->oBehParams;
+    dst->oBehParams2ndByte = src->oBehParams2ndByte;
+}
+
+void cur_obj_init_animation_and_anim_frame(s32 animIndex, s32 animFrame) {
+    cur_obj_init_animation_with_sound(animIndex);
+    o->header.gfx.animInfo.animFrame = animFrame;
+}
+
+s32 cur_obj_init_animation_and_check_if_near_end(s32 animIndex) {
+    cur_obj_init_animation_with_sound(animIndex);
+    return cur_obj_check_if_near_animation_end();
+}
+
+void cur_obj_init_animation_and_extend_if_at_end(s32 animIndex) {
+    cur_obj_init_animation_with_sound(animIndex);
+    cur_obj_extend_animation_if_at_end();
+}
+
+s32 cur_obj_check_grabbed_mario(void) {
+    if (o->oInteractStatus & INT_STATUS_GRABBED_MARIO) {
+        o->oKingBobombUnk88 = 1;
+        cur_obj_become_intangible();
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+s32 player_performed_grab_escape_action(void) {
+    static s32 grabReleaseState;
+    s32 result = FALSE;
+
+    if (gPlayer1Controller->stickMag < 30.0f) {
+        grabReleaseState = 0;
+    }
+
+    if (grabReleaseState == 0 && gPlayer1Controller->stickMag > 40.0f) {
+        grabReleaseState = 1;
+        result = TRUE;
+    }
+
+    if (gPlayer1Controller->buttonPressed & A_BUTTON) {
+        result = TRUE;
+    }
+
+    return result;
+}
+
+void cur_obj_unused_play_footstep_sound(s32 animFrame1, s32 animFrame2, s32 sound) {
+    if (cur_obj_check_anim_frame(animFrame1) || cur_obj_check_anim_frame(animFrame2)) {
+        cur_obj_play_sound_2(sound);
+    }
+}
+
+void enable_time_stop_including_mario(void) {
+    gTimeStopState |= TIME_STOP_ENABLED | TIME_STOP_MARIO_AND_DOORS;
+    o->activeFlags |= ACTIVE_FLAG_INITIATED_TIME_STOP;
+}
+
+void disable_time_stop_including_mario(void) {
+    gTimeStopState &= ~(TIME_STOP_ENABLED | TIME_STOP_MARIO_AND_DOORS);
+    o->activeFlags &= ~ACTIVE_FLAG_INITIATED_TIME_STOP;
+}
+
+s32 cur_obj_check_interacted(void) {
+    if (o->oInteractStatus & INT_STATUS_INTERACTED) {
+        o->oInteractStatus = 0;
+        return TRUE;
+    } else {
+        return FALSE;
+    }
+}
+
+void cur_obj_spawn_loot_blue_coin(void) {
+    if (o->oNumLootCoins >= 5) {
+        spawn_object(o, MODEL_BLUE_COIN, bhvMrIBlueCoin);
+        o->oNumLootCoins -= 5;
+    }
+}
+
+#ifndef VERSION_JP
+void cur_obj_spawn_star_at_y_offset(f32 targetX, f32 targetY, f32 targetZ, f32 offsetY) {
+    q32 objectPosYq = QFIELD(o, oPosY);
+    QMODFIELD(o, oPosY, += q(offsetY) + q(gDebugInfo[5][0]));
+    spawn_default_star(targetX, targetY, targetZ);
+    QSETFIELD(o, oPosY, objectPosYq);
+}
+#endif
