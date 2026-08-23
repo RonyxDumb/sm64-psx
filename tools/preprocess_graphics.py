@@ -558,7 +558,7 @@ for line_idx, line in enumerate(in_lines):
 						#else:
 							#	flush_triangle_queue()
 							#	#cur_display_list.cmds.append(cmd)
-					case "gsSPSetGeometryMode" | "gsSPClearGeometryMode" | "gsDPSetCombineMode" | "gsDPSetTextureImage" | "gsDPLoadTextureTile" | "gsDPLoadTextureBlock" | "gsSPTextureRectangle" | "gsSPTexture" | "gsSPLight" | "gsSPNumLights" | "gsSPSetLights1" | "gsSPSetEnvColor":
+					case "gsSPSetGeometryMode" | "gsSPClearGeometryMode" | "gsDPSetCombineMode" | "gsDPSetTextureImage" | "gsDPLoadTextureTile" | "gsDPLoadTextureBlock" | "gsSPTextureRectangle" | "gsSPTexture" | "gsSPLight" | "gsSPNumLights" | "gsSPSetLights1" | "gsDPSetEnvColor" | "gsSPSetEnvColor":
 						flush_triangle_queue()
 						cur_display_list.cmds.append(cmd)
 					case _:

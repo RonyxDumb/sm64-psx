@@ -2,25 +2,43 @@ include ../util.mk
 
 HOST_ENV := $(shell uname 2>/dev/null || echo Unknown)
 HOST_ENV := $(patsubst MINGW%,MinGW,$(HOST_ENV))
+MINGW64_ROOT ?= $(firstword $(foreach prefix,/mingw64 /c/msys64/mingw64 /c/devkitPro/msys2/mingw64,$(if $(wildcard $(prefix)/bin/gcc),$(prefix))))
 
+ifneq ($(MINGW64_ROOT),)
+CC           := $(MINGW64_ROOT)/bin/gcc
+CXX          := $(MINGW64_ROOT)/bin/g++
+export PATH := $(MINGW64_ROOT)/bin:$(PATH)
+else
 # Returns the path to the command $(1) if exists. Otherwise returns an empty string.
 find-command = $(shell which $(1) 2>/dev/null)
 ifneq ($(call find-command,gcc),)
 CC           := gcc
-CXX          := gcc++
+CXX          := g++
 else ifneq ($(call find-command,clang),)
 CC           := clang
 CXX          := clang++
 else
 $(error no suitable C and C++ compiler found)
 endif
+endif
 
-CFLAGS       := -I. -Iinclude -Wall -Wextra -Wno-unused-parameter -pedantic -O3 -march=native -mtune=native -s -g
+CFLAGS       := -I. -Iinclude -Wall -Wextra -Wno-unused-parameter -pedantic -O3 -march=native -mtune=native -pipe -s -g
 LDFLAGS      := -lm -lstdc++
 ALL_PROGRAMS := textconv aifc_decode aiff_extract_codebook tabledesign extract_data_for_mio skyconv makextfiles compress_mario_anims psx_sample_gen convert_image_psx n64graphics mio0
+HOST_TOOLS := textconv aifc_decode extract_data_for_mio skyconv makextfiles compress_mario_anims psx_sample_gen convert_image_psx n64graphics mio0
 LIBAUDIOFILE := audiofile/libaudiofile.a
 
+ifeq ($(origin HOST_TOOL_EXEEXT), undefined)
+	ifneq ($(filter MinGW MSYS% CYGWIN%,$(HOST_ENV)),)
+		HOST_TOOL_EXEEXT := .exe
+	else
+		HOST_TOOL_EXEEXT :=
+	endif
+endif
+
 BUILD_PROGRAMS := $(ALL_PROGRAMS)
+BUILD_PROGRAM_TARGETS := $(addsuffix $(HOST_TOOL_EXEEXT),$(BUILD_PROGRAMS))
+HOST_TOOL_TARGETS := $(addsuffix $(HOST_TOOL_EXEEXT),$(HOST_TOOLS))
 
 default: all
 
@@ -28,7 +46,7 @@ makextfiles_SOURCES := makextfiles.c
 
 compress_mario_anims_SOURCES := compress_mario_anims.c
 
-psx_sample_gen: $(LIBAUDIOFILE)
+psx_sample_gen$(HOST_TOOL_EXEEXT): $(LIBAUDIOFILE) | host-audiofile
 psx_sample_gen_SOURCES := psx_sample_gen.c
 psx_sample_gen_CFLAGS  := -Iaudiofile
 psx_sample_gen_LDFLAGS := -Laudiofile -laudiofile
@@ -53,7 +71,7 @@ aifc_decode_SOURCES := aifc_decode.c
 
 aiff_extract_codebook_SOURCES := aiff_extract_codebook.c
 
-tabledesign: $(LIBAUDIOFILE)
+tabledesign$(HOST_TOOL_EXEEXT): $(LIBAUDIOFILE)
 tabledesign_SOURCES := sdk-tools/tabledesign/codebook.c sdk-tools/tabledesign/estimate.c sdk-tools/tabledesign/print.c sdk-tools/tabledesign/tabledesign.c
 tabledesign_CFLAGS  := -Iaudiofile -Wno-uninitialized
 tabledesign_LDFLAGS := -Laudiofile -laudiofile -lstdc++
@@ -84,17 +102,22 @@ mkpsxiso:
 	$(V)mv mkpsxiso-2.10-Linux/bin/mkpsxiso ./mkpsxiso
 	$(V)rm -rf mkpsxiso-2.10-Linux mkpsxiso-2.10-Linux.zip
 
-all-except-recomp: $(LIBAUDIOFILE) $(BUILD_PROGRAMS) psxavenc mkpsxiso
+host-tools: host-audiofile $(HOST_TOOL_TARGETS)
+
+host-audiofile:
+	$(MAKE) -B -C audiofile
+
+all-except-recomp: $(LIBAUDIOFILE) $(BUILD_PROGRAM_TARGETS) psxavenc mkpsxiso
 
 all: all-except-recomp ido5.3_recomp
 
 clean:
-	$(RM) $(ALL_PROGRAMS) psxavenc mkpsxiso
+	$(RM) $(BUILD_PROGRAM_TARGETS) psxavenc mkpsxiso
 	$(MAKE) -C audiofile clean
 	$(MAKE) -C ido5.3_recomp clean
 
 define COMPILE
-$(1): $($1_SOURCES)
+$(1)$(HOST_TOOL_EXEEXT): $($1_SOURCES)
 	$$(CC) $(CFLAGS) $($1_CFLAGS) $$^ -o $$@ $($1_LDFLAGS) $(LDFLAGS)
 endef
 
@@ -103,7 +126,6 @@ ido5.3_recomp:
 
 $(foreach p,$(BUILD_PROGRAMS),$(eval $(call COMPILE,$(p))))
 
-$(LIBAUDIOFILE):
-	@$(MAKE) -C audiofile
+$(LIBAUDIOFILE): | host-audiofile
 
-.PHONY: all all-except-recomp clean default ido5.3_recomp
+.PHONY: all all-except-recomp clean default host-audiofile host-tools ido5.3_recomp

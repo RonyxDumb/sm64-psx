@@ -137,7 +137,7 @@ TARGET_CFLAGS += -march=r3000 -mtune=r3000 \
 TARGET_CFLAGS += -ffunction-sections -fdata-sections -Wl,--gc-sections
 
 # this can hurt performance (appears to be no longer needed)
-TARGET_CFLAGS += -fconserve-stack
+# TARGET_CFLAGS += -fconserve-stack
 
 # objectively correct optimization flags
 TARGET_CFLAGS += -fstrict-aliasing -fstrict-overflow -mno-check-zero-division -ffast-math -ffp-contract=fast \
@@ -153,7 +153,7 @@ TARGET_CFLAGS += -free -fira-loop-pressure -fpredictive-commoning -fsched-pressu
 	-fipa-pta -fipa-icf -fipa-reorder-for-locality -fipa-bit-cp -fipa-vrp \
 	-fno-prefetch-loop-arrays -fsched-pressure -fsched-spec-load
 
-# -O3 territory
+# -O3 territory 🥶
 #TARGET_CFLAGS += -fipa-cp-clone -ftracer \
 #	-floop-interchange -floop-unroll-and-jam -fpeel-loops \
 #	-fsplit-loops -fsplit-paths -funswitch-loops -fversion-loops-for-strides
@@ -328,15 +328,20 @@ endif
 
 $(BUILD_DIR)/bgm/dummy%.track.xa: empty.wav $(PSXAVENC)
 >	$(V)mkdir -p $(dir $@)
->	$(V)$(PSXAVENC) -t xa -f 37800 -b 8 -c 2 -F $(*:track=) -C 0 $< $@
+>	$(V)$(PSXAVENC) -t xa -f 37800 -b 4 -c 2 -F $(*:track=) -C 0 $< $@
 
 $(BUILD_DIR)/bgm/%.track.xa: .local/%.wav $(PSXAVENC)
 >	$(V)mkdir -p $(dir $@)
->	$(V)$(PSXAVENC) -t xa -f 37800 -b 8 -c 2 -F $(*:track=) -C 0 $< $@
+>	$(V)$(PSXAVENC) -t xa -f 37800 -b 4 -c 2 -F $(*:track=) -C 0 $< $@
 
 $(BUILD_DIR)/bgm/pack.xa: $(TOOLS_DIR)/interleave_xa.py $(foreach track,$(BGM_TRACKS),$(BUILD_DIR)/bgm/$(track).track.xa)
 >	$(V)mkdir -p $(dir $@)
 >	$(V)$(PYTHON) $(TOOLS_DIR)/interleave_xa.py $(BUILD_DIR)/bgm/info.dat $(BUILD_DIR)/bgm/pack.xa $(filter-out %.py,$^)
+
+$(BUILD_DIR)/bgm/pack.xa.valid: $(BUILD_DIR)/bgm/pack.xa $(TOOLS_DIR)/validate_xa_psx.py
+>	@$(PRINT) "$(GREEN)Validating hardware XA: $(BLUE)$< $(NO_COL)\n"
+>	$(V)$(PYTHON) $(TOOLS_DIR)/validate_xa_psx.py $<
+>	$(V)touch $@
 
 # Sound files
 SOUND_BANK_FILES    := $(wildcard sound/sound_banks/*.json)
@@ -501,15 +506,26 @@ else
 	EXT_FILES_SECTIONS_TXT := $(BUILD_DIR)/ext_files_sections.txt
 endif
 
-# workaround make getting stuck while processing the dependency graph by splitting it at the choke point: ext_files.dat
+# Repack EXT.DAT for CD locality: keep each level's leveldata/scriptgeo together.
+EXT_FILES_ORDERED_TXT := $(BUILD_DIR)/ext_files_sections_ordered.txt
+$(EXT_FILES_ORDERED_TXT): $(EXT_FILES_SECTIONS_TXT) $(TOOLS_DIR)/reorder_ext_files_psx.py
+>	@$(PRINT) "$(GREEN)Optimizing EXT.DAT CD locality$(NO_COL)\n"
+>	$(V)$(PYTHON) $(TOOLS_DIR)/reorder_ext_files_psx.py $< $@
+
+# Split ext_files.dat generation into a recursive make to avoid
+# choking the main dependency graph.
 ifeq ($(MAKE_EXT_FILES),1)
-$(BUILD_DIR)/ext_files_defsym.txt $(BUILD_DIR)/ext_files.dat &: $(TOOLS_DIR)/makextfiles $(EXT_FILES_SECTIONS_TXT)
->	$(V)$(TOOLS_DIR)/makextfiles $(EXT_FILES_SECTIONS_TXT) $(BUILD_DIR)/ext_files.dat $(BUILD_DIR)/ext_files_defsym.txt.tmp
+
+$(BUILD_DIR)/ext_files_defsym.txt $(BUILD_DIR)/ext_files.dat &: $(TOOLS_DIR)/makextfiles $(EXT_FILES_ORDERED_TXT)
+>	$(V)$(TOOLS_DIR)/makextfiles $(EXT_FILES_ORDERED_TXT) $(BUILD_DIR)/ext_files.dat $(BUILD_DIR)/ext_files_defsym.txt.tmp
 >	@echo $(HARDCODED_SEGMENTS) >> $(BUILD_DIR)/ext_files_defsym.txt.tmp
 >	@mv $(BUILD_DIR)/ext_files_defsym.txt.tmp $(BUILD_DIR)/ext_files_defsym.txt
+
 else
+
 $(BUILD_DIR)/ext_files_defsym.txt $(BUILD_DIR)/ext_files.dat &:
->	while ! $(MAKE) -q $(BUILD_DIR)/ext_files.dat MAKE_EXT_FILES=1; do $(MAKE) $(BUILD_DIR)/ext_files.dat MAKE_EXT_FILES=1; done
+>	$(MAKE) $(BUILD_DIR)/ext_files.dat MAKE_EXT_FILES=1
+
 endif
 
 #==============================================================================#
@@ -614,6 +630,16 @@ $(ELF): $(SEG_FILES_WITH_GEO) $(O_FILES) $(GODDARD_O_FILES) $(LIBC_O_FILES) $(BU
 >	$(V)$(LD) $(CFLAGS) -L $(BUILD_DIR) -no-pie -o $@.tmp $(addprefix -Wl$(COMMA)--just-symbols=,$(SEG_FILES_WITH_GEO)) `cat $(BUILD_DIR)/ext_files_defsym.txt` $(O_FILES) $(GODDARD_O_FILES) $(LIBC_O_FILES) $(LDFLAGS)
 >	$(V)$(OBJCOPY) -R.scratchpad -R.bss -R.sbss $@.tmp
 >	@mv $@.tmp $@
+>
+>	@dl_size=`$(OBJDUMP) -h $@ | awk '$$2==".dl_exec" {print $$3}'`; \
+>	if [ -n "$$dl_size" ]; then \
+>		dl_dec=$$((16#$$dl_size)); \
+>		printf "PSX .dl_exec I-cache section: 0x%s (%d bytes)\n" "$$dl_size" "$$dl_dec"; \
+>		if [ $$dl_dec -gt 4096 ]; then \
+>			echo "ERROR: .dl_exec exceeds the PS1 4 KiB I-cache budget"; \
+>			exit 1; \
+>		fi; \
+>	fi
 
 $(EXE): $(ELF)
 >	@$(PRINT) "$(GREEN)Converting to executable: $(BLUE)$@ $(NO_COL)\n"
@@ -622,7 +648,7 @@ $(EXE): $(ELF)
 $(BUILD_DIR)/psx_iso.xml: psx_iso.xml
 >	$(V)cp $< $@
 
-$(ISO_OUT) $(CUE_OUT) &: $(EXE) $(BUILD_DIR)/bgm/pack.xa $(BUILD_DIR)/psx_iso.xml system.cnf
+$(ISO_OUT) $(CUE_OUT) &: $(EXE) $(BUILD_DIR)/bgm/pack.xa.valid $(BUILD_DIR)/psx_iso.xml system.cnf
 >	@$(PRINT) "$(GREEN)Making iso file: $(BLUE)$@ $(NO_COL)\n"
 >	$(V)cd $(BUILD_DIR) && ../../$(MKPSXISO) -y ./psx_iso.xml
 

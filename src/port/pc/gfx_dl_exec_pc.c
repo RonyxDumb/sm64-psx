@@ -6,9 +6,6 @@
 #include <assert.h>
 #include <engine/math_util.h>
 
-void gfx_begin_queueing_for_tessellation(const GfxVtx* v0, const GfxVtx* v1, const GfxVtx* v2, const GfxVtx* v3, u8 flags) {}
-void gfx_finish_queueing_for_tessellation(u32 rgb0, u32 rgb1, u32 rgb2, u32 rgb3) {}
-
 u32 debug_processed_poly_count = 0;
 void* tex_ptr = NULL;
 static Color env_color;
@@ -315,7 +312,6 @@ void gfx_run_compiled_dl(dl_t* dl) {
 				break;
 			}
 			case DL_CMD_MTX_SET: case DL_CMD_MTX_MUL: {
-				gfx_flush_tessellation_queue_if_necessary();
 				const ShortMatrix* addr = DL_UNPACK_PTR(cmd);
 				if(op == DL_CMD_MTX_MUL) {
 					gfx_modelview_mul(addr);
@@ -329,12 +325,10 @@ void gfx_run_compiled_dl(dl_t* dl) {
 				break;
 			}
 			case DL_CMD_MTX_POP: {
-				gfx_flush_tessellation_queue_if_necessary();
 				gfx_modelview_pop();
 				break;
 			}
 			case DL_CMD_MTX_N64_SET: case DL_CMD_MTX_N64_MUL: {
-				gfx_flush_tessellation_queue_if_necessary();
 				const u32* addr = DL_UNPACK_PTR(cmd);
 				ShortMatrix arg_mtx;
 				for(int i = 0; i < 4; i++) {

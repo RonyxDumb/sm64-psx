@@ -42,6 +42,7 @@
 /.vscode
 .ropeproject
 /.cache
+/.claude
 
 # General project-specific ignores
 /__pycache__
@@ -54,6 +55,14 @@ doxygen/doxygen/*
 .assets-local.txt
 sm64_save_file.bin
 sm64config.txt
+cd_psx_diff.txt
+Checking
+Choosing
+Downloading
+Ensuring
+Installing
+irm
+Resolved
 *.processed.c
 /.venv
 /.local

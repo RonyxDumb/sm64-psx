@@ -30,7 +30,12 @@ void gfx_backend_init() {
 }
 
 void gfx_fade_to_color(Color color, u8 alpha) {
-	Packet packet = gfx_packet_begin();
+	Packet packet = gfx_packet_begin(8);
+#ifdef RETAIL_DIAGNOSTICS
+	if(!packet.header) {
+		return;
+	}
+#endif
 	gfx_packet_append(&packet, gp0_texpage(gp0_page(0, 0, GP0_BLEND_SUBTRACT, 0), true, false));
 	gfx_packet_append(&packet, (u32) alpha << 16 | (u32) alpha << 8 | alpha | gp0_rectangle(false, true, true));
 	gfx_packet_append(&packet, gp0_xy(0, 0));

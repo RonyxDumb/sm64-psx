@@ -12,7 +12,7 @@ SDL_Window* window;
 SDL_Renderer* renderer;
 
 void gfx_backend_init() {
-	window = SDL_CreateWindow("name", 960, 720, SDL_WINDOW_HIGH_PIXEL_DENSITY);
+	window = SDL_CreateWindow("sm64", 960, 720, SDL_WINDOW_HIGH_PIXEL_DENSITY);
 	renderer = SDL_CreateRenderer(window, NULL);
 	SDL_ShowWindow(window);
 	SDL_SetRenderLogicalPresentation(renderer, 320, 240, SDL_LOGICAL_PRESENTATION_LETTERBOX);

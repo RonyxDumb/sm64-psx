@@ -57,7 +57,7 @@ int main(int argc, const char** argv) {
 		for(; src_filename[entry->len]; entry->len++) {
 			entry->hash = ((entry->hash << 8) | (entry->hash >> (sizeof(unsigned long) * 8 - 8))) ^ src_filename[entry->len];
 		}
-		for(int i = 0; i < entry_count - 1; i++) {
+		for(int i = 0; i < entry_count; i++) {
 			if(entries[i].len == entry->len && entries[i].hash == entry->hash && !strcmp(entries[i].name, src_filename)) {
 				entry = NULL;
 				entry_count--;
@@ -80,16 +80,46 @@ int main(int argc, const char** argv) {
 			}
 			return 1;
 		}
-		fseek(src, data_start, SEEK_SET);
-		unsigned aligned_segment_size = (segment_size + 2047) / 2048 * 2048;
-		unsigned char* segment_buf = malloc(aligned_segment_size);
-		fread(segment_buf, segment_size, 1, src);
-		if(aligned_segment_size != segment_size) {
-			memset(segment_buf + segment_size, 0, aligned_segment_size - segment_size);
+		if(fseek(src, data_start, SEEK_SET) != 0) {
+			fprintf(stderr, "could not seek listed source file '%s'\n", src_filename);
+			fclose(src);
+			return 1;
 		}
 
+		unsigned aligned_segment_size = (segment_size + ALIGNMENT - 1) / ALIGNMENT * ALIGNMENT;
 		unsigned long start_in_blob = ftell(output_bin);
-		fwrite(segment_buf, aligned_segment_size, 1, output_bin);
+
+		/*
+		 * Stream instead of malloc(aligned_segment_size). Some generated level
+		 * blobs are large; the packer has no reason to mirror an entire segment
+		 * in host RAM just to copy it to EXT.DAT.
+		 */
+		unsigned char copy_buf[64 * 1024];
+		unsigned long remaining = segment_size;
+		while(remaining) {
+			size_t chunk = remaining > sizeof(copy_buf) ? sizeof(copy_buf) : remaining;
+			if(fread(copy_buf, 1, chunk, src) != chunk) {
+				fprintf(stderr, "short read from '%s'\n", src_filename);
+				fclose(src);
+				return 1;
+			}
+			if(fwrite(copy_buf, 1, chunk, output_bin) != chunk) {
+				fprintf(stderr, "write failed for '%s'\n", argv[2]);
+				fclose(src);
+				return 1;
+			}
+			remaining -= chunk;
+		}
+
+		unsigned long padding = aligned_segment_size - segment_size;
+		if(padding) {
+			static const unsigned char zeros[ALIGNMENT] = {0};
+			if(fwrite(zeros, 1, padding, output_bin) != padding) {
+				fprintf(stderr, "padding write failed for '%s'\n", argv[2]);
+				fclose(src);
+				return 1;
+			}
+		}
 
 		if(output_defsym) {
 			char start_sym[128];
@@ -105,7 +135,6 @@ int main(int argc, const char** argv) {
 				}
 				return 1;
 			}
-			unsigned encoded_compressed_size = aligned_segment_size / ALIGNMENT;
 			fprintf(output_defsym, "-Wl,--defsym=%s=0x%lx -Wl,--defsym=%s=0x%lx ", start_sym, 4096 + start_in_blob, end_sym, 4096 + start_in_blob + segment_size);
 		}
 		fclose(src);
@@ -114,7 +143,6 @@ int main(int argc, const char** argv) {
 			entries = realloc(entries, capacity * sizeof(struct Entry));
 		}
 		fscanf(input, " ");
-		free(segment_buf);
 	}
 	free(entries);
 	if(!feof(input)) {

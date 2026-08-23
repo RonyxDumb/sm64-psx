@@ -55,6 +55,14 @@ endif
 
 DEFINES += F3D_OLD=1 NON_MATCHING=1 AVOID_UB=1 NO_AUDIO=1
 
+ifeq ($(SATURN),1)
+	PLATFORM := saturn
+else ifeq ($(PC),1)
+	PLATFORM := pc
+else
+	PLATFORM := psx
+endif
+
 # Whether to hide commands or not
 VERBOSE ?= 0
 ifeq ($(VERBOSE),0)
@@ -67,8 +75,8 @@ COLOR ?= 1
 # display selected options unless 'make clean' or 'make distclean' is run
 ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
 	$(info ==== Build Options ====)
-	$(info Platform:           psx)
-	$(info Region:              $(VERSION))
+	$(info Platform:           $(PLATFORM))
+	$(info Region:             $(VERSION))
 	$(info =======================)
 endif
 
@@ -84,6 +92,14 @@ TOOLS_DIR := tools
 # on tools and assets, and we use directory globs in the makefiles
 
 PYTHON := python3
+HOST_UNAME := $(shell uname -s 2>/dev/null || echo Unknown)
+ifeq ($(origin HOST_TOOL_EXEEXT), undefined)
+	ifneq ($(filter MINGW% MSYS% CYGWIN%,$(HOST_UNAME)),)
+		HOST_TOOL_EXEEXT := .exe
+	else
+		HOST_TOOL_EXEEXT :=
+	endif
+endif
 
 ifeq ($(filter clean distclean print-%,$(MAKECMDGOALS)),)
 	# Make sure assets exist
@@ -95,18 +111,22 @@ ifeq ($(filter clean distclean print-%,$(MAKECMDGOALS)),)
 		endif
 	endif
 
-	# Make tools if out of date
+	# Make the host tools needed by the selected platform.
 	$(info Building tools...)
-	DUMMY != $(MAKE) --no-print-directory -C $(TOOLS_DIR) all-except-recomp >&2 || echo FAIL
+	ifeq ($(PLATFORM),pc)
+		DUMMY != $(MAKE) --no-print-directory -C $(TOOLS_DIR) host-tools HOST_TOOL_EXEEXT=$(HOST_TOOL_EXEEXT) >&2 || echo FAIL
+	else
+		DUMMY != $(MAKE) --no-print-directory -C $(TOOLS_DIR) all-except-recomp >&2 || echo FAIL
+	endif
 	ifeq ($(DUMMY),FAIL)
 		$(error Failed to build tools)
 	endif
 	$(info Building...)
 endif
 
-ifeq ($(SATURN),1)
+ifeq ($(PLATFORM),saturn)
 	include Makefile.ss.mk
-else ifeq ($(PC),1)
+else ifeq ($(PLATFORM),pc)
 	include Makefile.pc.mk
 else
 	include Makefile.psx.mk

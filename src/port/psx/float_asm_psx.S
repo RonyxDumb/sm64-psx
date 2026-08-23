@@ -1,5 +1,8 @@
-// hand-optimized soft float for PSX, by malucart, 2024-2025
-// feel free to use or improve it
+// PS1 soft-float fast path for SM64-PSX
+// Based on malucart's hand-optimized implementation (2024-2025).
+// Revision goals: preserve ABI, keep GTE-assisted normalization, reduce
+// pathological/slow division cases, fix +/-0 comparison, and avoid adding
+// expensive generic IEEE-754 machinery not used by this port.
 
 .set noreorder
 .set nomacro
@@ -128,6 +131,11 @@ __addsf3:
 	and $v0, $a0, signbit
 	// adjust sig1 to work with the larger exponent by shifting it right
 	subu $at, exp0, exp1
+	// If the exponent gap is >=25, the smaller operand cannot affect
+	// this non-rounding 24-bit significand path. Return the larger operand.
+	sltiu leadingzeros, $at, 25
+	beqz leadingzeros, .Lreta0
+	nop
 	bgez inputsxor, .Ladddontneg // if the input signs are equal, don't negate the smaller significand
 	srlv sig1, sig1, $at // branch delay slot
 	// if the input signs are equal, subtract and skip the addition, to avoid wasting a cycle
@@ -141,6 +149,10 @@ __addsf3:
 	// adjust sig0 to work with the larger exponent by shifting it right
 	subu $at, exp1, exp0
 	move exp0, exp1
+	// Same shortcut when the rhs has the larger exponent.
+	sltiu leadingzeros, $at, 25
+	beqz leadingzeros, .Lreta1
+	nop
 	bgez inputsxor, .Ladddontneg // if the input signs are equal, don't negate the smaller significand
 	srlv sig0, sig0, $at // branch delay slot
 	// negate the smaller significand (only if the input signs are equal)
@@ -244,56 +256,84 @@ __mulsf3:
 	or $v0, $v0, sig
 
 // operation: float / float -> float
-// 13-57 cycles
-// 13 cycles if a0 == 0
-// 18 cycles if a1 is a power of two
-// 57 cycles if a0 != 0 && a1 != 1
-// note: division by zero results in zero (we do not handle infs or nans in this house)
+// Fast paths:
+// - numerator == 0          -> 0
+// - denominator == 0        -> 0 (port-defined behavior)
+// - |a| == |b|              -> +/-1.0
+// - denominator power of 2  -> exponent-only adjustment
 .section .text._float.div
 .weak __divsf3
 .balign 16
 __divsf3:
+	// Strip signs. +/-0 become identical here.
+	sll abs0, $a0, 1
+	sll abs1, $a1, 1
+
+	beqz abs0, .Lret0
 	lui signbit, 0x8000
-	// extract significands
+
+	// The old routine claimed x/0 -> 0 but did not actually test it.
+	beqz abs1, .Lret0
+	xor inputsxor, $a0, $a1
+
+	// Equal magnitudes divide to exactly +/-1.0 without DIVU.
+	bne abs0, abs1, .Ldiv_not_equal_mag
+	and $at, inputsxor, signbit
+	lui $v0, 0x3F80
+	jr $ra
+	or $v0, $v0, $at
+
+.Ldiv_not_equal_mag:
+	// Mantissa bits of denominator, excluding hidden bit.
+	sll sig1withouthiddenzero, $a1, 9
+	srl sig1withouthiddenzero, sig1withouthiddenzero, 9
+	bnez sig1withouthiddenzero, .Ldiv_general
+	nop
+
+	// Exact power-of-two divisor: adjust exponent only.
+	srl exp1, $a1, 23
+	andi exp1, exp1, 0xFF
+	addiu exp1, exp1, -127
+	sll exp1, exp1, 23
+	subu $v0, $a0, exp1
+	and $at, inputsxor, signbit
+	lui signbit, 0x8000
+	nor signbit, signbit, $zero
+	and $v0, $v0, signbit
+	jr $ra
+	or $v0, $v0, $at
+
+.Ldiv_general:
+	// Build significands.
+	lui hiddenone, 0x0080
 	sll sig0, $a0, 8
-	or sig0, sig0, signbit // hidden one
+	or sig0, sig0, signbit
+
 	srl sig1, $a1, 8
-	andi sig1withouthiddenzero, sig1, 0xFFFF
-	ori sig1, sig1withouthiddenzero, 0x8000 // hidden one
-	// the divu will cook for a crazy 36 cycles
+	andi sig1, sig1, 0xFFFF
+	ori sig1, sig1, 0x8000
+
+	// Start the long R3000A divide as early as possible.
 	divu $0, sig0, sig1
-	// extract the exponents
+
+	// Hide DIVU latency with exponent/sign work.
 	srl exp0, $a0, 23
 	andi exp0, exp0, 0xFF
-	beqz exp0, .Lret0 // early return if a == 0
 	srl exp1, $a1, 23
-	// fast return if b is a power of two
-	bnez sig1withouthiddenzero, .Ldivnotpoweroftwo
-	andi exp1, exp1, 0xFF // branch delay slot
-	and $v0, $a1, signbit
-	addu exp1, exp1, -127
-	sll exp1, exp1, 23
-	subu $a0, $a0, exp1
-	jr $ra
-	xor $v0, $v0, $a0
-.Ldivnotpoweroftwo:
-	// determine the result sign bit
-	xor inputsxor, $a0, $a1
-	and $v0, inputsxor, signbit
-	// subtract the exponents
+	andi exp1, exp1, 0xFF
 	addiu exp0, exp0, 134
 	subu exp0, exp0, exp1
+	and $v0, inputsxor, signbit
 
-	// take the significand out of the oven
 	mflo sig
 	sll sig, sig, 8
 
-	// normalize the significand
+	// GTE leading-zero counter is much faster than a software normalization loop.
 	mtc2 sig, lzcs
-	nop // GTE move delay slot
-	nop // GTE operation delay slot
-	mfc2 leadingzeros, lzcr // branch delay slot
-	sll sig, sig, 1 // GTE move delay slot
+	nop
+	nop
+	mfc2 leadingzeros, lzcr
+	sll sig, sig, 1
 	sllv sig, sig, leadingzeros
 	srl sig, sig, 9
 
@@ -302,7 +342,7 @@ __divsf3:
 	or $v0, $v0, exp0
 
 	jr $ra
-	or $v0, $v0, sig // branch delay slot
+	or $v0, $v0, sig
 
 // operation: float <=> float -> int (zero if a == b, negative if a < b, positive if a > b)
 // 4-8 cycles
@@ -314,18 +354,22 @@ __divsf3:
 .weak __eqsf2, __nesf2, __ltsf2, __lesf2, __gtsf2, __gesf2
 .balign 16
 __eqsf2: __nesf2: __ltsf2: __lesf2: __gtsf2: __gesf2:
-	// early return if they are equal
+	// Exact bitwise equality.
 	beq $a0, $a1, .Lcmpequal
-	sgt $v0, $a0, $a1 // branch delay slot
-	// now $v0 is 0 if $a0 < $a1 and 1 if $a0 > $a1
-	// invert it if both floats are negative
+	sll abs0, $a0, 1
+
+	// Treat +0.0 and -0.0 as equal.
+	sll abs1, $a1, 1
+	or $at, abs0, abs1
+	beqz $at, .Lcmpequal
+	sgt $v0, $a0, $a1
+
+	// Reverse signed-bit-pattern ordering when both operands are negative.
 	and $at, $a0, $a1
 	srl $at, 31
-	// store the result in $a0, and its boolean inverse in $a1
 	xor $a0, $v0, $at
 	xori $a1, $a0, 1
-	// then, by subtracting the two, 0 becomes -1 and 1 remains 1
-	// this allows the early return to work, as $a0 == $a1 in that case, so the result is 0
 .Lcmpequal:
 	jr $ra
-	subu $v0, $a0, $a1 // branch delay slot
+	subu $v0, $a0, $a1
+

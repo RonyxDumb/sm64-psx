@@ -11,6 +11,7 @@
 #include <port/psx/cd_psx.h>
 #include <audio/external.h>
 #include <sounds.h>
+#include <string.h>
 
 #ifdef BENCH
 
@@ -107,10 +108,22 @@ void audio_backend_init() {
 	SPU_REVERB_VOL_L = 0;
 	SPU_REVERB_VOL_R = 0;
 
-	u8* buf = main_pool_alloc(_audio_sample_segment_end - _audio_sample_segment, MEMORY_POOL_RIGHT);
-	dma_read(buf, _audio_sample_segment, _audio_sample_segment_end);
-	sendSPUData(buf, SPU_START_ADDR, (u32) (_audio_sample_segment_end - _audio_sample_segment + 255) / 256 * 256);
+	// Do not mirror the complete sample bank in 2 MB main RAM. Stream it to SPU
+	// through one CD-sector staging buffer instead. This also avoids the old
+	// rounded sendSPUData() size reading up to 255 bytes beyond the allocation.
+	#define SPU_STAGE_SIZE 2048u
+	u8* buf = main_pool_alloc(SPU_STAGE_SIZE, MEMORY_POOL_RIGHT);
+	u32 sample_size = (u32) (_audio_sample_segment_end - _audio_sample_segment);
+	for(u32 offset = 0; offset < sample_size; offset += SPU_STAGE_SIZE) {
+		u32 chunk = sample_size - offset;
+		if(chunk > SPU_STAGE_SIZE) chunk = SPU_STAGE_SIZE;
+		u32 transfer = (chunk + 255) & ~255u;
+		memset(buf, 0, transfer);
+		dma_read(buf, _audio_sample_segment + offset, _audio_sample_segment + offset + chunk);
+		sendSPUData(buf, SPU_START_ADDR + offset, transfer);
+	}
 	main_pool_free(buf);
+	#undef SPU_STAGE_SIZE
 
 	table = main_pool_alloc(_audio_table_segment_end - _audio_table_segment, MEMORY_POOL_RIGHT);
 	dma_read((u8*) table, _audio_table_segment, _audio_table_segment_end);
@@ -227,7 +240,7 @@ void play_music(UNUSED u8 player, UNUSED u16 seqArgs, UNUSED u16 fadeTimer) {
 			}
 		} else {
 			cur_song_idx = track - 2;
-			psx_cd_run_cmd(CDROM_SETMODE, (const u8[]) {MODE_XA_ADPCM | MODE_XA_SECTOR_FILTER | MODE_2X_SPEED}, 1);
+			psx_cd_set_mode(MODE_XA_ADPCM | MODE_XA_SECTOR_FILTER | MODE_2X_SPEED);
 			psx_cd_run_cmd(CDROM_SETFILTER, (const u8[]) {cur_song_idx, 0}, 2);
 			psx_cd_run_cmd(CDROM_SETLOC, (u8*) &bgm_info[cur_song_idx].start_msf, 3);
 			psx_cd_run_cmd(CDROM_READS, NULL, 0);

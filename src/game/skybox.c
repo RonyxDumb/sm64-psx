@@ -9,6 +9,10 @@
 #include "save_file.h"
 #include "segment2.h"
 #include "sm64.h"
+#ifdef TARGET_PSX
+#include <port/gfx/gfx.h>
+#include <port/gfx/gfx_internal.h>
+#endif
 
 #ifndef TARGET_N64
 //#define BETTER_SKYBOX_POSITION_PRECISION
@@ -298,25 +302,84 @@ void draw_skybox_tile_grid(Gfx **dlist, s8 background, s8 player, s8 colorIndex)
 /**
  * Creates the skybox's display list, then draws the 3x3 grid of tiles.
  */
-Gfx *init_skybox_display_list(UNUSED s8 player, UNUSED s8 background, UNUSED s8 colorIndex) {
-//    s32 dlCommandCount = 5 + (3 * 3) * 7; // 5 for the start and end, plus 9 skybox tiles
-//    void *skybox = alloc_display_list(dlCommandCount * sizeof(Gfx));
-//    Gfx *dlist = skybox;
-//
-//    if (skybox == NULL) {
-//        return NULL;
-//    } else {
-//        Mtx *ortho = create_skybox_ortho_matrix(player);
-//
-//        gSPDisplayList(dlist++, dl_skybox_begin);
-//        gSPMatrix(dlist++, VIRTUAL_TO_PHYSICAL(ortho), G_MTX_PROJECTION | G_MTX_MUL | G_MTX_NOPUSH);
-//        gSPDisplayList(dlist++, dl_skybox_tile_tex_settings);
-//        draw_skybox_tile_grid(&dlist, background, player, colorIndex);
-//        gSPDisplayList(dlist++, dl_skybox_end);
-//        gSPEndDisplayList(dlist);
-//    }
-//    return skybox;
+Gfx *init_skybox_display_list(s8 player, s8 background, s8 colorIndex) {
+#ifdef TARGET_PSX
+    enum {
+        SKYBOX_VISIBLE_TILES = 9,
+        SKYBOX_COMMANDS_PER_TILE = 3,
+        SKYBOX_FIXED_COMMANDS = 8
+    };
+
+    dl_t *dl = alloc_display_list(
+        (SKYBOX_FIXED_COMMANDS + SKYBOX_VISIBLE_TILES * SKYBOX_COMMANDS_PER_TILE)
+        * sizeof(dl_t));
+    GfxVtx *verts = alloc_display_list(SKYBOX_VISIBLE_TILES * 4 * sizeof(GfxVtx));
+    ShortMatrix *identity = alloc_display_list(sizeof(ShortMatrix));
+
+    if (dl == NULL || verts == NULL || identity == NULL) {
+        return NULL;
+    }
+
+    *identity = mtx_identity();
+
+    dl_t *out = dl;
+    *(out++) = DL_PACK_OP(DL_CMD_MTX_PUSH);
+    *(out++) = DL_PACK_OP(DL_CMD_MTX_SET) | DL_PACK_PTR(identity);
+    *(out++) = DL_PACK_OP(DL_CMD_SET_BACKGROUND) | 1;
+    *(out++) = DL_PACK_OP(DL_CMD_SET_ORTHO) | 1;
+
+    s32 tileNo = 0;
+    for (s32 row = 0; row < 3; row++) {
+        for (s32 col = 0; col < 3; col++, tileNo++) {
+            s32 tileIndex = sSkyBoxInfo[player].upperLeftTile + row * SKYBOX_COLS + col;
+
+            const u8 *textureSeg =
+                (*(SkyboxTexture *) segmented_to_virtual(sSkyboxTextures[background]))[tileIndex % 80];
+            TexHeader *tex = segmented_to_virtual((void *) textureSeg);
+            if (tex == NULL) {
+                continue;
+            }
+
+            gfx_load_texture(tex);
+
+            s32 worldX = (tileIndex % SKYBOX_COLS) * SKYBOX_TILE_WIDTH;
+            s32 worldY = SKYBOX_HEIGHT - (tileIndex / SKYBOX_COLS) * SKYBOX_TILE_HEIGHT;
+
+            s16 x0 = (s16) (worldX - sSkyBoxInfo[player].scaledX);
+            s16 y0 = (s16) (sSkyBoxInfo[player].scaledY - worldY);
+            s16 x1 = (s16) (x0 + SKYBOX_TILE_WIDTH);
+            s16 y1 = (s16) (y0 + SKYBOX_TILE_HEIGHT);
+
+            GfxVtx *v = &verts[tileNo * 4];
+            Color c = {
+                .r = sSkyboxColors[colorIndex][0],
+                .g = sSkyboxColors[colorIndex][1],
+                .b = sSkyboxColors[colorIndex][2],
+                ._pad = 0xFF
+            };
+
+            v[0] = (GfxVtx) { .x = x0, .y = y0, .z = -1, .u = 0,  .v = 0,  .color = c };
+            v[1] = (GfxVtx) { .x = x0, .y = y1, .z = -1, .u = 0,  .v = 31, .color = c };
+            v[2] = (GfxVtx) { .x = x1, .y = y0, .z = -1, .u = 31, .v = 0,  .color = c };
+            v[3] = (GfxVtx) { .x = x1, .y = y1, .z = -1, .u = 31, .v = 31, .color = c };
+
+            *(out++) = DL_PACK_OP(DL_CMD_TEX) | DL_PACK_PTR(tex);
+            *(out++) = DL_PACK_OP(DL_CMD_VTX) | DL_PACK_PTR(v);
+            *(out++) = DL_PACK_OP(DL_CMD_QUAD)
+                       | (0u << 20) | (1u << 16) | (2u << 12) | (3u << 8)
+                       | PRIM_FLAG_TEXTURED;
+        }
+    }
+
+    *(out++) = DL_PACK_OP(DL_CMD_SET_ORTHO);
+    *(out++) = DL_PACK_OP(DL_CMD_SET_BACKGROUND);
+    *(out++) = DL_PACK_OP(DL_CMD_MTX_POP);
+    *(out++) = DL_PACK_OP(DL_CMD_END);
+
+    return (Gfx *) dl;
+#else
     return NULL;
+#endif
 }
 
 /**

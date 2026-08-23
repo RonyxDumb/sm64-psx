@@ -64,6 +64,17 @@ struct MainPoolBlock* main_pool_head_right;
 void* main_pool_start_addr;
 void* main_pool_end_addr;
 
+// PS1 RAM diagnostic: smallest amount of main-pool space observed since init.
+// Kept as a global symbol so PCSX-Redux/GDB can inspect it without logging every allocation.
+u32 gMainPoolLowWatermark;
+
+/* PS1 loader profiling, inspectable in PCSX-Redux/GDB. */
+#ifdef TARGET_PSX
+u32 gPsxSegmentLoadCount;
+u32 gPsxSegmentBytesLoaded;
+u32 gPsxLargestSegmentLoad;
+#endif
+
 static struct MainPoolState* gMainPoolState = NULL;
 
 uintptr_t set_segment_base_addr(s32 segment, void *addr) {
@@ -110,6 +121,7 @@ void main_pool_init(void* start, void* end) {
 	main_pool_head_right = (struct MainPoolBlock*) end - 1;
 	main_pool_start_addr = start;
 	main_pool_end_addr = end;
+	gMainPoolLowWatermark = (uintptr_t) main_pool_head_right - (uintptr_t) (main_pool_head_left + 1);
 }
 
 /**
@@ -119,17 +131,22 @@ void main_pool_init(void* start, void* end) {
  */
 void *main_pool_alloc(u32 size, u32 side) {
 	size = ALIGNPTR(size);
-	assertmf(main_pool_available() >= size, "main pool full", "required %d bytes, only %d available\n", size, main_pool_available());
+	u32 available_before = main_pool_available();
+	assertmf(available_before >= size, "main pool full", "required %d bytes, only %d available\n", size, available_before);
 	if(side == MEMORY_POOL_LEFT) {
 		struct MainPoolBlock* new_block = main_pool_head_left;
 		main_pool_head_left = (struct MainPoolBlock*) ((u8*) (main_pool_head_left + 1) + size);
 		main_pool_head_left->prev = new_block;
+		u32 available_after = main_pool_available();
+		if(available_after < gMainPoolLowWatermark) gMainPoolLowWatermark = available_after;
 		return new_block + 1;
 	} else {
 		struct MainPoolBlock* prev = main_pool_head_right;
 		main_pool_head_right = (struct MainPoolBlock*) ((u8*) (main_pool_head_right - 1) - size);
 		struct MainPoolBlock* new_block = main_pool_head_right;
 		new_block->prev = prev;
+		u32 available_after = main_pool_available();
+		if(available_after < gMainPoolLowWatermark) gMainPoolLowWatermark = available_after;
 		return new_block + 1;
 	}
 }
@@ -164,6 +181,8 @@ void* main_pool_realloc(void* addr, u32 size) {
 	main_pool_head_left = (struct MainPoolBlock*) ((u8*) (prev + 1) + size);
 	main_pool_head_left->prev = prev;
 	assert(main_pool_head_left + 1 <= main_pool_head_right);
+	u32 available_after = main_pool_available();
+	if(available_after < gMainPoolLowWatermark) gMainPoolLowWatermark = available_after;
 	return addr;
 }
 
@@ -210,7 +229,21 @@ void dma_read(u8 *dest, const u8 *srcStart, const u8 *srcEnd) {
 	}
 	assert(!((uintptr_t) dest % 4));
 	assert((uintptr_t) srcStart >= 4096);
-	cd_read(dest, (uintptr_t) srcStart - 4096, (uintptr_t) srcEnd - (uintptr_t) srcStart);
+	u32 transfer_size = (uintptr_t) srcEnd - (uintptr_t) srcStart;
+#ifdef TARGET_PSX
+	gPsxSegmentLoadCount++;
+	gPsxSegmentBytesLoaded += transfer_size;
+	if(transfer_size > gPsxLargestSegmentLoad) {
+		gPsxLargestSegmentLoad = transfer_size;
+	}
+#endif
+	/*
+	 * Keep this as one contiguous cd_read().  The PS1 CD backend already
+	 * transfers every sector in the request under one READN command, so
+	 * splitting this into artificial 2/4 KiB chunks would add SETLOC/PAUSE
+	 * overhead and make loading slower.
+	 */
+	cd_read(dest, (uintptr_t) srcStart - 4096, transfer_size);
 }
 
 /**

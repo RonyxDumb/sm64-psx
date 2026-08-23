@@ -201,12 +201,18 @@ void create_dl_ortho_matrix(void) {
 #else
 void create_dl_identity_matrix(void) {
     ShortMatrix* mtx = gfx_alloc_in_global_dl(sizeof(ShortMatrix));
+    if(mtx == NULL) {
+        return;
+    }
     *mtx = mtx_identity();
     gfx_emit_mtx_set(mtx);
 }
 
 void create_dl_translation_matrix(s8 pushOp, f32 x, f32 y, f32 z) {
     ShortMatrix* mtx = gfx_alloc_in_global_dl(sizeof(ShortMatrix));
+    if(mtx == NULL) {
+        return;
+    }
     *mtx = mtx_translationi((const short[]) {x, y, z});
     if(pushOp == MENU_MTX_PUSH) {
         gfx_emit_mtx_push();
@@ -216,8 +222,27 @@ void create_dl_translation_matrix(s8 pushOp, f32 x, f32 y, f32 z) {
 
 void create_dl_rotation_matrix(s8 pushOp, f32 a, f32 x, f32 y, f32 z) {
     ShortMatrix* mtx = gfx_alloc_in_global_dl(sizeof(ShortMatrix));
-    s16 aq = a; // TODO: fix the math?
-    *mtx = mtx_rotation_xyz((s16[]) {x == 1? aq: 0, y == 1? aq: 0, z == 1? aq: 0});
+    if(mtx == NULL) {
+        return;
+    }
+
+    /*
+     * guRotate() takes DEGREES, but mtx_rotation_xyz() uses SM64 binary
+     * angles (0x4000 = 90 degrees, 0x8000 = 180 degrees).
+     *
+     * The old PSX path simply cast e.g. 90.0f to 90, turning a requested
+     * 90-degree rotation into ~0.49 degrees. Dialog/pause UI relies heavily
+     * on these rotations, so its matrices became invalid for the intended
+     * layout.
+     */
+    s16 aq = (s16) (a * (65536.0f / 360.0f));
+
+    *mtx = mtx_rotation_xyz((s16[]) {
+        x == 1.0f ? aq : 0,
+        y == 1.0f ? aq : 0,
+        z == 1.0f ? aq : 0
+    });
+
     if(pushOp == MENU_MTX_PUSH) {
         gfx_emit_mtx_push();
     }
@@ -226,6 +251,9 @@ void create_dl_rotation_matrix(s8 pushOp, f32 a, f32 x, f32 y, f32 z) {
 
 void create_dl_scale_matrix(s8 pushOp, f32 x, f32 y, f32 z) {
     ShortMatrix* mtx = gfx_alloc_in_global_dl(sizeof(ShortMatrix));
+    if(mtx == NULL) {
+        return;
+    }
     *mtx = mtx_scalingq((q32[]) {q(x), q(y), q(z)});
     if(pushOp == MENU_MTX_PUSH) {
         gfx_emit_mtx_push();
@@ -298,10 +326,30 @@ void render_generic_char(u8 c) {
 #endif
 #ifdef RSP_DL
     gSPDisplayList(gDisplayListHead++, dl_ia_text_tex_settings);
+#else
+    /*
+     * PSX BUGFIX:
+     * The old non-RSP path only selected the glyph texture with gfx_emit_tex()
+     * and never emitted the display list that actually draws the glyph.
+     *
+     * As a result the dialog state machine ran normally, but every character
+     * was invisible. The same matrix-based text path used by the original
+     * dialog system can be retained: execute the converted text glyph DL after
+     * selecting its texture.
+     */
+    gfx_emit_call(segmented_to_virtual(dl_ia_text_tex_settings));
 #endif
 #ifdef VERSION_EU
+#ifdef RSP_DL
     gSPTextureRectangleFlip(gDisplayListHead++, gDialogX << 2, (gDialogY - 16) << 2,
                             (gDialogX + 8) << 2, gDialogY << 2, G_TX_RENDERTILE, 8 << 6, 4 << 6, 1 << 10, 1 << 10);
+#else
+    /*
+     * EU normally uses an explicit texture rectangle. On PSX, use the native
+     * sprite command so the glyph is not silently discarded.
+     */
+    gfx_emit_sprite(gDialogX, gDialogY - 16);
+#endif
 #endif
 }
 
@@ -1094,6 +1142,14 @@ void change_and_flash_dialog_text_color_lines(s8 colorMode, s8 lineNum) {
     } else {
         switch (gDialogBoxType) {
             case DIALOG_TYPE_ROTATE:
+#ifndef RSP_DL
+                /*
+                 * RDP text setup used to establish white implicitly. The PSX
+                 * command stream keeps environment color as explicit state;
+                 * force the expected white foreground for normal dialogs.
+                 */
+                gfx_emit_env_color_alpha_full(0xFFFFFF);
+#endif
                 break;
             case DIALOG_TYPE_ZOOM:
 #ifdef RSP_DL
@@ -1877,7 +1933,13 @@ void render_dialog_entries(void) {
                 gDialogBoxScale -= q(2.0);
             }
 
-            if (gDialogBoxOpenTimer == 0) {
+            /*
+             * Do not depend on landing on exactly zero. Fixed-point ports and
+             * alternate frame/update paths can cross zero without equalling it.
+             */
+            if (gDialogBoxOpenTimer <= 0) {
+                gDialogBoxOpenTimer = 0;
+                gDialogBoxScale = q(1);
                 gDialogBoxState = DIALOG_STATE_VERTICAL;
                 gDialogLineNum = 1;
             }
@@ -1929,7 +1991,9 @@ void render_dialog_entries(void) {
             gDialogBoxOpenTimer += q(10);
             gDialogBoxScale += q(2);
 
-            if (gDialogBoxOpenTimer == DEFAULT_DIALOG_BOX_ANGLE) {
+            if (gDialogBoxOpenTimer >= DEFAULT_DIALOG_BOX_ANGLE) {
+                gDialogBoxOpenTimer = DEFAULT_DIALOG_BOX_ANGLE;
+                gDialogBoxScale = DEFAULT_DIALOG_BOX_SCALE;
                 gDialogBoxState = DIALOG_STATE_OPENING;
                 gDialogID = DIALOG_NONE;
                 gDialogTextPos = 0;

@@ -86,3 +86,5 @@ typedef union {
 MinSecFrame lba_to_msf(u32 lba);
 
 extern bool cd_playing_audio;
+
+void psx_cd_set_mode(u8 mode);

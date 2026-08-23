@@ -4,6 +4,16 @@ import os
 import json
 
 
+def host_tool_name(name):
+    if sys.platform.startswith(("cygwin", "msys", "win")):
+        return name + ".exe"
+    return name
+
+
+def host_tool_path(name):
+    return "./tools/" + host_tool_name(name)
+
+
 def read_asset_map():
     with open("assets.json") as f:
         ret = json.load(f)
@@ -162,7 +172,13 @@ def main():
 
     # Make sure tools exist
     subprocess.check_call(
-        [make, "-s", "-C", "tools/", "n64graphics", "skyconv", "mio0", "aifc_decode"]
+        [
+            make,
+            "-s",
+            "-C",
+            "tools/",
+            *(host_tool_name(name) for name in ("n64graphics", "skyconv", "mio0", "aifc_decode")),
+        ]
     )
 
     # Go through the assets in roughly alphabetical order (but assets in the same
@@ -201,7 +217,7 @@ def main():
         if mio0 is not None:
             image = subprocess.run(
                 [
-                    "./tools/mio0",
+                    host_tool_path("mio0"),
                     "-d",
                     "-o",
                     str(mio0),
@@ -231,7 +247,7 @@ def main():
                             imagetype =  "cake" + ("-eu" if "eu" in asset else "")
                         subprocess.run(
                             [
-                                "./tools/skyconv",
+                                host_tool_path("skyconv"),
                                 "--type",
                                 imagetype,
                                 "--combine",
@@ -245,7 +261,7 @@ def main():
                         fmt = asset.split(".")[-2]
                         subprocess.run(
                             [
-                                "./tools/n64graphics",
+                                host_tool_path("n64graphics"),
                                 "-e",
                                 png_file.name,
                                 "-g",

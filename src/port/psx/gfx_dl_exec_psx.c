@@ -39,56 +39,17 @@ void gfx_reset_dl_exec() {
 	gte_setControlReg(GTE_LC33, 0);
 }
 
-typedef union {
-	struct {
-		u8 idx0;
-		u8 idx1;
-		u16 weight;
-	};
-	u32 data;
-} Interpolated;
-
-typedef struct {
-	//u32 v0data;
-	//u32 v1data;
-	//u32 v2data;
-	//u32 v3data;
-	GfxVtx v0;
-	GfxVtx v1;
-	GfxVtx v2;
-	GfxVtx v3;
-	bool is_quad;
-} SubPoly;
-
-#define POLY_QUEUE_MAX 3
-
-typedef struct {
-	u32 count;
-	SubPoly sub_polys[POLY_QUEUE_MAX];
-} PolyQueue;
-
-static GfxVtx between(const GfxVtx* v0, const GfxVtx* v1) {
-	return (GfxVtx) {
-		.x = ((s32) v0->x + v1->x) / 2, .y = ((s32) v0->y + v1->y) / 2, .z = ((s32) v0->z + v1->z) / 2,
-		.u = (v0->u + v1->u) / 2, .v = (v0->v + v1->v) / 2,
-		.color.as_u32 = ((v0->color.as_u32 & 0xFEFEFE) + (v1->color.as_u32 & 0xFEFEFE)) / 2,
-	};
-}
-
-[[gnu::flatten]] ALWAYS_INLINE static void draw_poly(PolyQueue* queue, u32 flags) {
-	SubPoly* poly = &queue->sub_polys[--queue->count];
-	GfxVtx* v0 = &poly->v0;
-	GfxVtx* v1 = &poly->v1;
-	GfxVtx* v2 = &poly->v2;
-	GfxVtx* v3 = poly->is_quad? &poly->v3: NULL;
-
-	gte_loadDataRegM(GTE_VXY0, (const u32*) &v0->xy);
-	gte_loadDataRegM(GTE_VZ0, &v0->zuv);
-	gte_loadDataRegM(GTE_VXY1, (const u32*) &v1->xy);
-	gte_loadDataRegM(GTE_VZ1, &v1->zuv);
-	gte_loadDataRegM(GTE_VXY2, (const u32*) &v2->xy);
-	gte_loadDataRegM(GTE_VZ2, &v2->zuv);
-
+[[gnu::flatten]] ALWAYS_INLINE static void draw_poly(
+	const GfxVtx* v0,
+	const GfxVtx* v1,
+	const GfxVtx* v2,
+	const GfxVtx* v3,
+	u32 flags
+) {
+	/*
+	 * Fast reject before touching the GTE. The previous version loaded all three
+	 * vertices first, even when ENV alpha made the primitive fully invisible.
+	 */
 #ifdef PRIM_FLAG_ENV_ALPHA
 	if((flags & PRIM_FLAG_ENV_ALPHA) && env_alpha._pad < ALPHA_OPAQUE) {
 #else
@@ -102,107 +63,122 @@ static GfxVtx between(const GfxVtx* v0, const GfxVtx* v1) {
 		flags |= PRIM_FLAG_FORCE_BLEND;
 	}
 
+	gte_loadDataRegM(GTE_VXY0, (const u32*) &v0->xy);
+	gte_loadDataRegM(GTE_VZ0, &v0->zuv);
+	gte_loadDataRegM(GTE_VXY1, (const u32*) &v1->xy);
+	gte_loadDataRegM(GTE_VZ1, &v1->zuv);
+	gte_loadDataRegM(GTE_VXY2, (const u32*) &v2->xy);
+	gte_loadDataRegM(GTE_VZ2, &v2->zuv);
+
 	u32 sxy0, sxy1, sxy2, sxy3;
-	s32 z, min_z;
-	bool gte_errored;
+	s32 z;
+
 	if(is_ortho) {
-		s16 ortho_z = -1;
-		ortho_z = is_2d_background? BACKGROUND_Z: (foreground_z? --foreground_z: 0);
-		//if((u32) ortho_z >= MAX_Z) return;
-		gte_errored = false;
+		const s16 ortho_z = is_2d_background ? BACKGROUND_Z : (foreground_z ? --foreground_z : 0);
 		z = ortho_z;
-		min_z = ortho_z;
+
 		gte_setControlReg(GTE_RT31RT32, 0);
 		gte_setControlReg(GTE_RT33, 0);
+
 		gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_TR);
-		//debug_processed_poly_count++;
 		sxy0 = (gte_getDataReg(GTE_IR1) & 0xFFFF) | gte_getDataReg(GTE_IR2) << 16;
+
 		gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V1 | GTE_MX_RT | GTE_CV_TR);
 		if(v3) {
-			gte_loadDataRegM(GTE_VXY0, (u32*) &v3->xy);
-			gte_loadDataRegM(GTE_VZ0, (u32*) &v3->z);
+			gte_loadDataRegM(GTE_VXY0, (const u32*) &v3->xy);
+			gte_loadDataRegM(GTE_VZ0, (const u32*) &v3->z);
 		}
 		sxy1 = (gte_getDataReg(GTE_IR1) & 0xFFFF) | gte_getDataReg(GTE_IR2) << 16;
+
 		gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V2 | GTE_MX_RT | GTE_CV_TR);
 		sxy2 = (gte_getDataReg(GTE_IR1) & 0xFFFF) | gte_getDataReg(GTE_IR2) << 16;
+
 		if(v3) {
 			gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_TR);
 			sxy3 = (gte_getDataReg(GTE_IR1) & 0xFFFF) | gte_getDataReg(GTE_IR2) << 16;
+		} else {
+			sxy3 = sxy2;
 		}
 	} else {
-		// RTPT transforms and projects all 3 vertices in a mere 23 cycles. based GTE :)
+		/* Three vertices transformed/projected by the GTE in one RTPT. */
 		gte_commandNoNop(GTE_CMD_RTPT | GTE_SF);
 
+		/* Reject vertices that overflow / cross the near projection limit. */
+		if(gte_getControlReg(GTE_FLAG) & IMPORTANT_GTE_ERRORS) {
+			return;
+		}
+
+#ifdef PSX_PROFILE_POLYS
 		debug_processed_poly_count++;
+#endif
 		is_2d_background = false;
 
-		//// if there was any error in rtpt, cull it
-		//if(gte_getControlReg(GTE_FLAG) & IMPORTANT_GTE_ERRORS) return;
-		gte_errored = gte_getControlReg(GTE_FLAG) & IMPORTANT_GTE_ERRORS;
-
-		// prepare to reject backfaces
+		/* Start NCLIP while we read depth values. */
 		gte_commandNoNop(GTE_CMD_NCLIP);
 
-		// sort z in the meantime
 		z = gte_getDataReg(GTE_SZ1);
 		if(z >= MAX_Z && !v3) {
-			return; // the quickest rejection known to man
-		}
-		s32 v1sz = gte_getDataReg(GTE_SZ2);
-		s32 v2sz = gte_getDataReg(GTE_SZ3);
-		if(v1sz > z) {
-			min_z = z;
-			z = v1sz;
-		} else {
-			min_z = v1sz;
-		}
-		if(v2sz > z) {
-			z = v2sz;
-		} else if(v2sz < min_z) {
-			min_z = v2sz;
+			return;
 		}
 
-		// reject backfaced triangles asap (cannot reject quads early because they are not guaranteed to be flat)
-		s32 nclip_result = gte_getDataReg(GTE_MAC0);
-		if(nclip_result >= 0 && !v3) return;
+		const s32 v1sz = gte_getDataReg(GTE_SZ2);
+		const s32 v2sz = gte_getDataReg(GTE_SZ3);
+		if(v1sz > z) z = v1sz;
+		if(v2sz > z) z = v2sz;
 
-		// fetch the rest of the results
+		const s32 nclip_result = gte_getDataReg(GTE_MAC0);
+		if(nclip_result >= 0 && !v3) {
+			return;
+		}
+
 		sxy0 = gte_getDataReg(GTE_SXY0);
 		sxy1 = gte_getDataReg(GTE_SXY1);
 		sxy2 = gte_getDataReg(GTE_SXY2);
 
 		if(v3) {
-			// if this is a quad, quickly transform the extra vertex with rtps
 			gte_loadDataRegM(GTE_VXY0, (const u32*) &v3->xy);
 			gte_loadDataRegM(GTE_VZ0, &v3->zuv);
 			gte_commandAfterLoad(GTE_CMD_RTPS | GTE_SF);
 
-			//// if there was any error in rtps, cull it
-			//if(gte_getControlReg(GTE_FLAG) & IMPORTANT_GTE_ERRORS) return;
-			gte_errored = gte_errored || (gte_getControlReg(GTE_FLAG) & IMPORTANT_GTE_ERRORS);
-
-			// prepare to reject backfaces
+			/* RTPS pushes v3 into the SXY FIFO; NCLIP now tests the second triangle. */
 			gte_commandNoNop(GTE_CMD_NCLIP);
-
-			// get the result
 			sxy3 = gte_getDataReg(GTE_SXY2);
-			s32 v3sz = gte_getDataReg(GTE_SZ3);
-			if(v3sz > z) {
-				z = v3sz;
-			} else if(v3sz < min_z) {
-				min_z = v3sz;
-			}
 
-			// reject if both triangles are backfaced
-			if(nclip_result >= 0 && (s32) gte_getDataReg(GTE_MAC0) >= 0) return;
+			const s32 v3sz = gte_getDataReg(GTE_SZ3);
+			if(v3sz > z) z = v3sz;
+
+			if(nclip_result >= 0 && (s32) gte_getDataReg(GTE_MAC0) >= 0) {
+				return;
+			}
 		} else {
 			sxy3 = sxy2;
 		}
-		if((u32) (z - 1) >= (u32) (MAX_Z - 1)) return;
-		s16 sx0 = sxy0, sx1 = sxy1, sx2 = sxy2, sx3 = sxy3;
-		if((sx0 <= 0 && sx1 <= 0 && sx2 <= 0 && sx3 <= 0) || (sx0 >= XRES && sx1 >= XRES && sx2 >= XRES && sx3 >= XRES)) {
+
+		if((u32) (z - 1) >= (u32) (MAX_Z - 1)) {
 			return;
 		}
+
+		/* Cheap coarse horizontal rejection before lighting and packet creation. */
+		const s16 sx0 = (s16) sxy0;
+		const s16 sx1 = (s16) sxy1;
+		const s16 sx2 = (s16) sxy2;
+		const s16 sx3 = (s16) sxy3;
+		if((sx0 <= 0 && sx1 <= 0 && sx2 <= 0 && sx3 <= 0) ||
+		   (sx0 >= XRES && sx1 >= XRES && sx2 >= XRES && sx3 >= XRES)) {
+			return;
+		}
+
+#ifdef PSX_VERTICAL_CULL
+		/* Optional A/B test: useful in scenes with lots of geometry above/below view. */
+		const s16 sy0 = (s16) (sxy0 >> 16);
+		const s16 sy1 = (s16) (sxy1 >> 16);
+		const s16 sy2 = (s16) (sxy2 >> 16);
+		const s16 sy3 = (s16) (sxy3 >> 16);
+		if((sy0 <= 0 && sy1 <= 0 && sy2 <= 0 && sy3 <= 0) ||
+		   (sy0 >= YRES && sy1 >= YRES && sy2 >= YRES && sy3 >= YRES)) {
+			return;
+		}
+#endif
 	}
 
 	u32 rgb0, rgb1, rgb2, rgb3;
@@ -210,104 +186,20 @@ static GfxVtx between(const GfxVtx* v0, const GfxVtx* v1) {
 		gte_setV0((s16) (s8) v0->color.r * (ONE / 128), (s16) (s8) v0->color.g * (ONE / 128), (s16) (s8) v0->color.b * (ONE / 128));
 		gte_setV1((s16) (s8) v1->color.r * (ONE / 128), (s16) (s8) v1->color.g * (ONE / 128), (s16) (s8) v1->color.b * (ONE / 128));
 		gte_setV2((s16) (s8) v2->color.r * (ONE / 128), (s16) (s8) v2->color.g * (ONE / 128), (s16) (s8) v2->color.b * (ONE / 128));
-		gte_commandNoNop(GTE_CMD_NCT | GTE_SF | GTE_LM); // 30 cycles
+		gte_commandNoNop(GTE_CMD_NCT | GTE_SF | GTE_LM);
+	} else if(flags & PRIM_FLAG_ENV_COLOR) {
+		rgb0 = env_color.as_u32 << 8 >> 8;
+		rgb1 = rgb0;
+		rgb2 = rgb0;
+		rgb3 = rgb0;
 	} else {
-		if(flags & PRIM_FLAG_ENV_COLOR) {
-			rgb0 = env_color.as_u32 << 8 >> 8;
-			rgb1 = rgb0;
-			rgb2 = rgb0;
-			rgb3 = rgb0;
-		} else {
-			rgb0 = v0->color.as_u32;
-			rgb1 = v1->color.as_u32;
-			rgb2 = v2->color.as_u32;
-			if(v3) rgb3 = v3->color.as_u32;
-		}
+		rgb0 = v0->color.as_u32;
+		rgb1 = v1->color.as_u32;
+		rgb2 = v2->color.as_u32;
+		if(v3) rgb3 = v3->color.as_u32;
 	}
 
-	// these things will hopefully be done while nct is cooking
-	if(false && (gte_errored || ((flags & PRIM_FLAG_TESSELLATE) && min_z <= MAX_TESSELLATION_Z))) {
-#if 1
-		if(v3) {
-			if(queue->count <= (u32) POLY_QUEUE_MAX - 4) {
-				SubPoly* additions = &queue->sub_polys[queue->count + 1];
-				queue->count += 4;
-
-				// top right
-				additions[0].v0 = between(v0, v2);
-				additions[0].v1 = between(v0, v3);
-				additions[0].v2 = *v2;
-				additions[0].v3 = between(v2, v3);
-				additions[0].is_quad = true;
-
-				// bottom left
-				additions[1].v0 = between(v0, v1);
-				additions[1].v1 = *v1;
-				additions[1].v2 = additions[0].v1;
-				additions[1].v3 = between(v1, v3);
-				additions[1].is_quad = true;
-
-				// bottom right
-				additions[2].v0 = additions[0].v1;
-				additions[2].v1 = additions[1].v3;
-				additions[2].v2 = additions[0].v3;
-				additions[2].v3 = *v3;
-				additions[2].is_quad = true;
-
-				// top left
-				*v1 = additions[1].v0;
-				*v2 = additions[0].v0;
-				*v3 = additions[0].v1;
-			}
-		} else {
-			if(queue->count <= POLY_QUEUE_MAX - 3) {
-				SubPoly* additions = &queue->sub_polys[queue->count + 1];
-				queue->count += 3;
-
-				// top right
-				additions[0].v0 = between(v0, v2);
-				additions[0].v1 = between(v1, v2);
-				additions[0].v2 = *v2;
-				additions[0].is_quad = false;
-
-				// bottom left
-				additions[1].v0 = between(v0, v1);
-				additions[1].v1 = *v1;
-				additions[1].v2 = additions[0].v1;
-				additions[1].is_quad = false;
-
-				// top left
-				*v1 = additions[1].v0;
-				*v2 = additions[0].v0;
-				poly->v3 = additions[0].v1;
-				poly->is_quad = true;
-			}
-		}
-#else
-		if(gte_errored) {
-			flags |= PRIM_FLAG_TESSELLATE | PRIM_FLAG_TESSELLATE_HIGH;
-		} else if(min_z > MAX_HIGH_TESSELLATION_Z) {
-			flags &= ~PRIM_FLAG_TESSELLATE_HIGH;
-		}
-		gfx_begin_queueing_for_tessellation(v0, v1, v2, v3, flags);
-		if(flags & PRIM_FLAG_LIGHTED) {
-			rgb0 = gte_getDataReg(GTE_RGB0);
-			rgb1 = gte_getDataReg(GTE_RGB1);
-			rgb2 = gte_getDataReg(GTE_RGB2);
-			if(v3) {
-				gte_setV0((s16) (s8) v3->color.r * (ONE / 128), (s16) (s8) v3->color.g * (ONE / 128), (s16) (s8) v3->color.b * (ONE / 128));
-				gte_commandNoNop(GTE_CMD_NCS | GTE_SF | GTE_LM);
-				rgb3 = gte_getDataReg(GTE_RGB2) / 2 & 0x7F7F7F;
-			}
-		}
-		rgb0 = rgb0 / 2 & 0x7F7F7F;
-		rgb1 = rgb1 / 2 & 0x7F7F7F;
-		rgb2 = rgb2 / 2 & 0x7F7F7F;
-		gfx_finish_queueing_for_tessellation(rgb0, rgb1, rgb2, rgb3);
-#endif
-		return;
-	}
-	u32 ot_z = z / (MAX_Z / Z_BUCKETS) + FOREGROUND_BUCKETS;
+	const u32 ot_z = z / (MAX_Z / Z_BUCKETS) + FOREGROUND_BUCKETS;
 
 	if(flags & PRIM_FLAG_LIGHTED) {
 		rgb0 = gte_getDataReg(GTE_RGB0);
@@ -333,24 +225,26 @@ static GfxVtx between(const GfxVtx* v0, const GfxVtx* v1) {
 			gfx_packet_append(&packet, sxy3);
 		}
 	}
+
 	if(flags & PRIM_FLAG_TEXTURED) {
-		TexHeader* tex = (TexHeader*) tex_ptr;
+		const TexHeader* tex = (const TexHeader*) tex_ptr;
 		gfx_packet_append(&packet, tex->window_cmd);
-		gfx_packet_append(&packet, (rgb0 / 2 & 0x7F7F7F) | _gp0_polygon(v3, false, true, true, flags & PRIM_FLAG_FORCE_BLEND));
+		gfx_packet_append(&packet, ((rgb0 >> 1) & 0x7F7F7F) | _gp0_polygon(v3, false, true, true, flags & PRIM_FLAG_FORCE_BLEND));
 		gfx_packet_append(&packet, sxy0);
 		gfx_packet_append(&packet, v0->uv | (u32) tex->clut_attr << 16);
-		gfx_packet_append(&packet, (rgb1 / 2 & 0x7F7F7F));
+		gfx_packet_append(&packet, (rgb1 >> 1) & 0x7F7F7F);
 		gfx_packet_append(&packet, sxy1);
 		gfx_packet_append(&packet, v1->uv | (u32) tex->page_attr << 16);
-		gfx_packet_append(&packet, (rgb2 / 2 & 0x7F7F7F));
+		gfx_packet_append(&packet, (rgb2 >> 1) & 0x7F7F7F);
 		gfx_packet_append(&packet, sxy2);
 		gfx_packet_append(&packet, v2->uv);
 		if(v3) {
-			gfx_packet_append(&packet, (rgb3 / 2 & 0x7F7F7F));
+			gfx_packet_append(&packet, (rgb3 >> 1) & 0x7F7F7F);
 			gfx_packet_append(&packet, sxy3);
 			gfx_packet_append(&packet, v3->uv);
 		}
 	}
+
 	gfx_packet_end(packet, ot_z);
 }
 
@@ -381,15 +275,16 @@ ALWAYS_INLINE static void set_light_from_cmd(dl_t cmd, u32 light_idx) {
 	}
 
 	u32 l13l21bak = gte_getControlReg(GTE_L13L21);
+	u32 lc13lc21bak = gte_getControlReg(GTE_LC13LC21);
 	if(light_idx == 0) {
 		gte_setControlReg(GTE_LC11LC12, r);
-		gte_setControlReg(GTE_LC13LC21, (gte_getControlReg(GTE_LC13LC21) & 0x0000FFFF) | g << 16);
+		gte_setControlReg(GTE_LC13LC21, (lc13lc21bak & 0x0000FFFF) | g << 16);
 		gte_setControlReg(GTE_LC31LC32, b);
 		gte_setControlReg(GTE_L11L12, nx);
 		gte_setControlReg(GTE_L13L21, (l13l21bak & 0x0000FFFF) | ny << 16);
 		gte_setControlReg(GTE_L31L32, nz);
 	} else {
-		gte_setControlReg(GTE_LC13LC21, (gte_getControlReg(GTE_LC13LC21) & 0xFFFF0000) | r);
+		gte_setControlReg(GTE_LC13LC21, (lc13lc21bak & 0xFFFF0000) | r);
 		gte_setControlReg(GTE_LC22LC23, g << 16);
 		gte_setControlReg(GTE_LC33, b);
 		gte_setControlReg(GTE_L13L21, (l13l21bak & 0xFFFF0000) | nx);
@@ -398,6 +293,7 @@ ALWAYS_INLINE static void set_light_from_cmd(dl_t cmd, u32 light_idx) {
 	}
 }
 
+#ifdef PSX_ENABLE_SHADOWS
 [[gnu::flatten]] static void draw_square_shadow(s32 radius, u8 opacity) {
 	u32 sxy0, sxy1, sxy2, sxy3;
 	gte_setV0(-radius, 0, -radius);
@@ -498,6 +394,8 @@ static const s16 shadow_vertex1[2] = {
 	gfx_packet_end(packet, z);
 }
 
+#endif
+
 [[gnu::noinline]] static void handle_extra_cmd(u8 op, u32 cmd) {
 	[[gnu::assume(op >= _DL_CMD_ENUM_FIRST_EXTRA && op <= _DL_CMD_ENUM_END)]];
 	switch(op) {
@@ -534,7 +432,9 @@ static const s16 shadow_vertex1[2] = {
 			break;
 		}
 		case DL_CMD_SQUARE_SHADOW: {
+#ifdef PSX_ENABLE_SHADOWS
 			draw_square_shadow((s16) (cmd & 0xFFFF), (u8) (cmd >> 16 & 0xFF));
+#endif
 			break;
 		}
 	}
@@ -573,21 +473,16 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 				vertices = (void*) cmd;
 				break;
 			}
-			case DL_CMD_TRI: case DL_CMD_QUAD: {
-				PolyQueue poly_queue;
-				poly_queue.count = 1;
-				poly_queue.sub_polys[0].v0 = vertices[cmd >> 20 /*& 0xF*/];
-				poly_queue.sub_polys[0].v1 = vertices[cmd >> 16 & 0xF];
-				poly_queue.sub_polys[0].v2 = vertices[cmd >> 12 & 0xF];
-				if(op == DL_CMD_QUAD) {
-					poly_queue.sub_polys[0].v3 = vertices[cmd >> 8 & 0xF];
-					poly_queue.sub_polys[0].is_quad = true;
-				} else {
-					poly_queue.sub_polys[0].is_quad = false;
-				}
-				do {
-					draw_poly(&poly_queue, cmd & 0xFF);
-				} while(poly_queue.count);
+			case DL_CMD_TRI:
+			case DL_CMD_QUAD: {
+				/* No temporary PolyQueue: tessellation is disabled, so use source vertices directly. */
+				draw_poly(
+					&vertices[cmd >> 20 /*& 0xF*/],
+					&vertices[cmd >> 16 & 0xF],
+					&vertices[cmd >> 12 & 0xF],
+					op == DL_CMD_QUAD ? &vertices[cmd >> 8 & 0xF] : NULL,
+					cmd & 0xFF
+				);
 				break;
 			}
 			case DL_CMD_ENV_COLOR_ALPHA_0:
@@ -643,7 +538,9 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 				break;
 			}
 			case DL_CMD_CIRCLE_SHADOW: {
+#ifdef PSX_ENABLE_SHADOWS
 				draw_circle_shadow((s16) (cmd & 0xFFFF), (u8) (cmd >> 16 & 0xFF));
+#endif
 				break;
 			}
 			default: {

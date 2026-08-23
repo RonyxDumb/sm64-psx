@@ -45,7 +45,7 @@ void gfx_swap_buffers(bool vsync_30fps) {
 	fb[selected_fb].frame_start_packet[0] = gp0_tag(7, (void*) prev_ot_entry);
 
 	sendLinkedList(&ot[OT_LEN - 1]);
-	GPU_GP1 = gp1_fbOffset(selected_fb? 0: XRES, 0);
+	GPU_GP1 = gp1_fbOffset(selected_fb ? XRES : 0, 0); // display the buffer that was just rendered
 	if(vsync_30fps) {
 		OSTime frame_time = osGetTime() - last_frame_time_us;
 		if(frame_time < 1000000 / 30) {
