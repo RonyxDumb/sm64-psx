@@ -1,0 +1,37 @@
+diff --git a/src/game/behaviors/intro_lakitu.inc.c b/src/game/behaviors/intro_lakitu.inc.c
+--- a/src/game/behaviors/intro_lakitu.inc.c
++++ b/src/game/behaviors/intro_lakitu.inc.c
+@@
+         case 1:
+             cur_obj_enable_rendering();
+@@
+-            if (intro_lakitu_set_pos_and_focus(gCurrentObject, gIntroLakituStartToPipeOffsetFromCamera,
+-                                               gIntroLakituStartToPipeFocus) == 1)
+-                gCurrentObject->oAction += 1;
++            /*
++             * The fixed-point spline port can fail to report the exact
++             * "finished" state because progress is quantized. When that
++             * happens Lakitu remains in action 1 forever even though the
++             * camera cutscene continues to the pipe/dialog.
++             *
++             * Keep the normal spline completion path, but add a deterministic
++             * timer fallback matched to the original intro timings.
++             */
++            s32 lakituSplineFinished =
++                intro_lakitu_set_pos_and_focus(gCurrentObject,
++                                               gIntroLakituStartToPipeOffsetFromCamera,
++                                               gIntroLakituStartToPipeFocus);
++#ifdef VERSION_EU
++            if (lakituSplineFinished == 1 || gCutsceneTimer > 590)
++#else
++            if (lakituSplineFinished == 1 || gCutsceneTimer > 710)
++#endif
++                gCurrentObject->oAction = 2;
+@@
+         case 2:
+ #ifdef VERSION_EU
+             if (gCutsceneTimer > 599) {
+ #else
+             if (gCutsceneTimer > 720) {
+ #endif
+                 gCurrentObject->oAction += 1;
