@@ -49,7 +49,8 @@ void sendVRAMData(const void *data, int x, int y, int width, int height);
 void receiveVRAMData(void *data, int x, int y, int width, int height);
 void sendSPUData(const void *data, unsigned start, unsigned length);
 void receiveSPUData(void *data, unsigned start, unsigned length);
-void clearOrderingTable(uint32_t *table, int numEntries);
+void startOrderingTableClear(uint32_t *table, int numEntries);
+void awaitOrderingTableClear();
 //uint32_t *allocatePacket(DMAChain *chain, int zIndex, int numCommands);
 
 #ifdef __cplusplus

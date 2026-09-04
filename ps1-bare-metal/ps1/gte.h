@@ -271,12 +271,12 @@ DEF gte_loadDataRegM(GTEDataRegister reg, const uint32_t *ptr) {
 	__asm__ volatile inline("lwc2 $%0, %1\n" :: "i"(reg), "m"(*ptr) : "memory");
 }
 DEF gte_storeDataReg(GTEDataRegister reg, int16_t offset, void *ptr) {
-	__asm__ volatile inline(
+	__asm__ inline(
 		"swc2 $%0, %1(%2)\n" :: "i"(reg), "i"(offset), "r"(ptr) : "memory"
 	);
 }
 DEF gte_storeDataRegM(GTEDataRegister reg, uint32_t *ptr) {
-	__asm__ volatile inline(
+	__asm__ inline(
 		"swc2 $%1, %0\n" : "=m"(*ptr) : "i"(reg) : "memory"
 	);
 }

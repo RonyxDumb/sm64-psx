@@ -31,19 +31,24 @@
 // NDEBUG is automatically defined by CMake when the executable is built in
 // release mode.
 #ifdef NDEBUG
-#define assert(expr)
-#define assertm(expr, screen_msg)
+	#if __clang__
+		#define assert(expr) __builtin_assume(expr)
+		#define assertm(expr, screen_msg) __builtin_assume(expr)
+	#else
+		#define assert(expr) [[gnu::assume(expr)]]
+		#define assertm(expr, screen_msg) [[gnu::assume(expr)]]
+	#endif
 #else
-#define assert(expr) ((expr)? (void) 0: _assertAbort(__FILE__, __LINE__, #expr, "assertion failed"))
-#define assertm(expr, screen_msg) ((expr)? (void) 0: _assertAbort(__FILE__, __LINE__, #expr, screen_msg))
+	#define assert(expr) ((expr)? (void) 0: _assertAbort(__FILE__, __LINE__, #expr, "assertion failed"))
+	#define assertm(expr, screen_msg) ((expr)? (void) 0: _assertAbort(__FILE__, __LINE__, #expr, screen_msg))
 #endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-[[gnu::cold]] [[noreturn]] void _assertAbort(const char *file, int line, const char *expr, const char *screen_msg);
-[[gnu::cold]] [[noreturn]] void abort(void);
+[[gnu::cold]] [[gnu::noinline]] [[noreturn]] void _assertAbort(const char *file, int line, const char *expr, const char *screen_msg);
+[[gnu::cold]] [[gnu::noinline]] [[noreturn]] void abort(void);
 #define abortf(...) (printf(__VA_ARGS__), abort())
 #define assertf(expr, ...) ((expr)? (void) 0: (printf(__VA_ARGS__), _assertAbort(__FILE__, __LINE__, #expr, "assertion failed")))
 #define assertmf(expr, screen_msg, ...) ((expr)? (void) 0: (printf(__VA_ARGS__), _assertAbort(__FILE__, __LINE__, #expr, screen_msg)))

@@ -8,30 +8,23 @@
 #endif
 
 #if defined(TARGET_PSX) && !defined(NO_SCRATCHPAD)
-#define scratchpad [[gnu::section(".scratchpad")]]
+	#define scratchpad [[gnu::section(".scratchpad")]]
 #else
+	#ifdef TARGET_PSX
+		#warning scratchpad usage is off!!!
+	#endif
+	#define scratchpad
+#endif
+
 #ifdef TARGET_PSX
-#warning scratchpad usage is off!!!
-#endif
-#define scratchpad
+	#define sdata [[gnu::section(".sdata")]]
+	#define sbss [[gnu::section(".sbss")]]
+#else
+	#define sdata
+	#define sbss
 #endif
 
-#ifdef TARGET_PC
-#define sdata
-#define sbss
-#else
-#define sdata [[gnu::section(".sdata")]]
-#define sbss [[gnu::section(".sbss")]]
-#endif
-
-#ifdef NO_INLINE
-#ifndef TARGET_PC
-#warning forced inlining is off!!
-#endif
-#define ALWAYS_INLINE [[gnu::noinline]] [[gnu::noipa]]
-#else
 #define ALWAYS_INLINE [[gnu::always_inline]] inline
-#endif
 
 #ifdef unreachable
 #undef unreachable

@@ -200,7 +200,11 @@ cur_display_list: DisplayList | None = None
 triangle_queue: list[tuple[str | None, int, int, int] | None] = []
 cur_selected_vtx_in_dl: str | None = None
 
-TESSELLATION_THRESHOLD_SQ = 256 * 256
+# Keep static level geometry below the size at which PS1 affine texture
+# distortion and clipping become severe. Runtime tessellation remains as a
+# fallback for dynamic geometry and clip-plane crossings.
+TESSELLATION_THRESHOLD = 256
+TESSELLATION_THRESHOLD_SQ = TESSELLATION_THRESHOLD * TESSELLATION_THRESHOLD
 
 # repeatedly split large triangles in the queue
 def tessellate_triangle_queue():
@@ -329,12 +333,22 @@ def flush_single_triangle(t0_idx: int):
 def flush_triangle_queue():
 	if len(triangle_queue) == 0:
 		return
-	#if should_tessellate:
-	#	tessellate_triangle_queue()
-	#normalize_triangle_queue_uvs()
+
+	# Level geometry is the safest place to tessellate: the split is deterministic
+	# in object space, so both sides of a shared edge choose the same midpoints.
+	# This prevents runtime distance-dependent T-junctions from being the primary
+	# source of subdivision. Keep UV normalization disabled for now because it
+	# needs texture-state awareness (wrap/clamp and texture scale).
+	if should_tessellate:
+		tessellate_triangle_queue()
+
 	assert cur_display_list is not None
-	for t0_idx in range(len(triangle_queue)):
-		flush_single_triangle(t0_idx)
+	# Do not merge newly tessellated area triangles back into PS1 quads. Keeping
+	# the explicit triangulation makes affine interpolation deterministic and
+	# preserves the crack-free split pattern.
+	if not should_tessellate:
+		for t0_idx in range(len(triangle_queue)):
+			flush_single_triangle(t0_idx)
 	last = None
 	for t in triangle_queue:
 		if t is not None:
@@ -344,19 +358,19 @@ def flush_triangle_queue():
 				if last[0] == t[0]:
 					if t[0]:
 						cur_display_list.cmds.append(Cmd(f"gsSPVertex({t[0]}, {n64_vtx_list_lengths[t[0]]}, 0),"))
-					cur_display_list.cmds.append(Cmd(f"gsSP2Triangles({last[1]}, {last[2]}, {last[3]}, 0, {t[1]}, {t[2]}, {t[3]}, 0),"))
+					cur_display_list.cmds.append(Cmd(f"gsSP2Triangles({last[1]}, {last[2]}, {last[3]}, 0,{t[1]},{t[2]},{t[3]},0),"))
 				else:
 					if last[0]:
-						cur_display_list.cmds.append(Cmd(f"gsSPVertex({last[0]}, {n64_vtx_list_lengths[last[0]]}, 0),"))
-					cur_display_list.cmds.append(Cmd(f"gsSP1Triangle({last[1]}, {last[2]}, {last[3]}, 0),"))
+						cur_display_list.cmds.append(Cmd(f"gsSPVertex({last[0]},{n64_vtx_list_lengths[last[0]]},0),"))
+					cur_display_list.cmds.append(Cmd(f"gsSP1Triangle({last[1]},{last[2]},{last[3]},0),"))
 					if t[0]:
-						cur_display_list.cmds.append(Cmd(f"gsSPVertex({t[0]}, {n64_vtx_list_lengths[t[0]]}, 0),"))
-					cur_display_list.cmds.append(Cmd(f"gsSP1Triangle({t[1]}, {t[2]}, {t[3]}, 0),"))
+						cur_display_list.cmds.append(Cmd(f"gsSPVertex({t[0]},{n64_vtx_list_lengths[t[0]]},0),"))
+					cur_display_list.cmds.append(Cmd(f"gsSP1Triangle({t[1]},{t[2]},{t[3]},0),"))
 				last = None
 	if last is not None:
 		if last[0]:
-			cur_display_list.cmds.append(Cmd(f"gsSPVertex({last[0]}, {n64_vtx_list_lengths[last[0]]}, 0),"))
-		cur_display_list.cmds.append(Cmd(f"gsSP1Triangle({last[1]}, {last[2]}, {last[3]}, 0),"))
+			cur_display_list.cmds.append(Cmd(f"gsSPVertex({last[0]},{n64_vtx_list_lengths[last[0]]},0),"))
+		cur_display_list.cmds.append(Cmd(f"gsSP1Triangle({last[1]},{last[2]},{last[3]},0),"))
 	triangle_queue.clear()
 
 model_c_path = sys.argv[1]
@@ -386,7 +400,7 @@ for line_idx, line in enumerate(in_lines):
 						break
 			else:
 				raise RuntimeError(f"unhandled condition in {model_c_path}:{line_idx + 1}")
-		elif line.startswith("#ifdef") or line.startswith("#ifndef") or line.startswith("#if"):
+		elif line.startswith(("#ifdef", "#ifndef", "#if")):
 			exclusion_depth += 1
 		elif line.startswith("#endif"):
 			exclusion_depth -= 1
@@ -418,7 +432,7 @@ for line_idx, line in enumerate(in_lines):
 				exclusion_depth += 1
 		else:
 			raise RuntimeError(f"unhandled condition in {model_c_path}:{line_idx + 1}")
-	elif line.startswith("#else") or line.startswith("#elif"):
+	elif line.startswith(("#else", "#elif")):
 		should_exclude_line = True
 		exclusion_depth += 1
 	elif line.startswith("#endif"):
@@ -499,11 +513,11 @@ for line_idx, line in enumerate(in_lines):
 						case _:
 							raise ValueError(f"unhandled identifier {e} in {model_c_path}:{line_idx + 1}")
 		case ParseState.CopiedDefinition:
-			if line.startswith("};") or line.startswith(");"):
+			if line.startswith(("};", ");")):
 				state = ParseState.TopLevel
 			out_lines.append(line + "\n")
 		case ParseState.IgnoredDefinition:
-			if line.startswith("};") or line.startswith(");"):
+			if line.startswith(("};", ");")):
 				state = ParseState.TopLevel
 		case ParseState.MultilineComment:
 			if line.endswith("*/"):
@@ -558,7 +572,7 @@ for line_idx, line in enumerate(in_lines):
 						#else:
 							#	flush_triangle_queue()
 							#	#cur_display_list.cmds.append(cmd)
-					case "gsSPSetGeometryMode" | "gsSPClearGeometryMode" | "gsDPSetCombineMode" | "gsDPSetTextureImage" | "gsDPLoadTextureTile" | "gsDPLoadTextureBlock" | "gsSPTextureRectangle" | "gsSPTexture" | "gsSPLight" | "gsSPNumLights" | "gsSPSetLights1" | "gsDPSetEnvColor" | "gsSPSetEnvColor":
+					case "gsSPSetGeometryMode" | "gsSPClearGeometryMode" | "gsDPSetCombineMode" | "gsDPSetTextureImage" | "gsDPLoadTextureTile" | "gsDPLoadTextureBlock" | "gsSPTextureRectangle" | "gsSPTexture" | "gsSPLight" | "gsSPNumLights" | "gsSPSetLights1" | "gsSPSetEnvColor":
 						flush_triangle_queue()
 						cur_display_list.cmds.append(cmd)
 					case _:

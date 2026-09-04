@@ -21,7 +21,7 @@
 
 /*---------------------------------------------------------------------*
         Copyright (C) 1998 Nintendo. (Originated by SGI)
-        
+
         $RCSfile: os_cache.h,v $
         $Revision: 1.1 $
         $Date: 1998/10/09 08:01:04 $
@@ -35,6 +35,7 @@ extern "C" {
 #endif
 
 #include <PR/ultratypes.h>
+#include <stddef.h>
 
 #if defined(_LANGUAGE_C) || defined(_LANGUAGE_C_PLUS_PLUS)
 

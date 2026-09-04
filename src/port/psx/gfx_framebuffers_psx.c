@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <port/gfx/gfx_internal.h>
 #include <ps1/gpu.h>
 #include <ps1/gpucmd.h>
@@ -9,8 +10,10 @@ scratchpad static u32* ot;
 scratchpad static u32* next_packet;
 
 void gfx_init_buffers() {
-	clearOrderingTable(fb[0].ot, OT_LEN);
-	clearOrderingTable(fb[1].ot, OT_LEN);
+	startOrderingTableClear(fb[0].ot, OT_LEN);
+	awaitOrderingTableClear();
+	startOrderingTableClear(fb[1].ot, OT_LEN);
+	awaitOrderingTableClear();
 	selected_fb = 0;
 	ot = fb[selected_fb].ot;
 	next_packet = fb[selected_fb].packet_pool;
@@ -45,7 +48,13 @@ void gfx_swap_buffers(bool vsync_30fps) {
 	fb[selected_fb].frame_start_packet[0] = gp0_tag(7, (void*) prev_ot_entry);
 
 	sendLinkedList(&ot[OT_LEN - 1]);
-	GPU_GP1 = gp1_fbOffset(selected_fb ? XRES : 0, 0); // display the buffer that was just rendered
+	GPU_GP1 = gp1_fbOffset(selected_fb? 0: XRES, 0);
+
+	selected_fb ^= 1;
+	ot = fb[selected_fb].ot;
+	next_packet = fb[selected_fb].packet_pool;
+	startOrderingTableClear(ot, OT_LEN);
+
 	if(vsync_30fps) {
 		OSTime frame_time = osGetTime() - last_frame_time_us;
 		if(frame_time < 1000000 / 30) {
@@ -57,18 +66,16 @@ void gfx_swap_buffers(bool vsync_30fps) {
 		GPU_GP1 = gp1_dispBlank(false); // ensure the display has been turned back on
 	}
 
-	selected_fb ^= 1;
-	ot = fb[selected_fb].ot;
-	next_packet = fb[selected_fb].packet_pool;
-	clearOrderingTable(ot, OT_LEN);
+	awaitOrderingTableClear();
 }
 
 void gfx_discard_frame() {
-	clearOrderingTable(ot, OT_LEN);
+	startOrderingTableClear(ot, OT_LEN);
 	next_packet = fb[selected_fb].packet_pool;
 	gfx_init_global_dl();
 	gfx_reset_rsp_jit();
 	gfx_reset_dl_exec();
+	awaitOrderingTableClear();
 }
 
 ALWAYS_INLINE Packet gfx_packet_begin() {
@@ -79,11 +86,8 @@ ALWAYS_INLINE Packet gfx_packet_begin() {
 	};
 }
 
-ALWAYS_INLINE void gfx_packet_append(Packet* packet, u32 cmd) {
-	*(packet->end++) = cmd;
-}
-
 ALWAYS_INLINE void gfx_packet_end(Packet packet, u32 ot_z) {
+	assert((u32) (next_packet - fb[selected_fb].packet_pool) < PACKET_POOL_LEN);
 	u32 packet_size = (u32) packet.end - (u32) packet.start;
 	*packet.header = ot[ot_z] | packet_size << 22;
 	ot[ot_z] = (u32) next_packet & 0x00FFFFFF;

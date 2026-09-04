@@ -5,15 +5,15 @@
 #include <assert.h>
 
 #if defined(TARGET_PSX) && !defined(NO_KERNEL_RAM)
-#define GLOBAL_DL_BUFFER_START ((void*) 16)
-#define GLOBAL_DL_BUFFER_END ((void*) (65536 - TESSELLATION_QUEUE_SIZE_BYTES))
+	#define GLOBAL_DL_BUFFER_START ((void*) 4096)
+	#define GLOBAL_DL_BUFFER_END ((void*) 65536)
 #else
-#ifdef TARGET_PSX
-#warning kernel ram global dl disabled
-#endif
-static dl_t global_dl_buf[16384];
-#define GLOBAL_DL_BUFFER_START ((void*) global_dl_buf)
-#define GLOBAL_DL_BUFFER_END ((void*) global_dl_buf + sizeof(global_dl_buf))
+	#ifdef TARGET_PSX
+		#warning kernel ram global dl disabled
+	#endif
+	static dl_t global_dl_buf[16384];
+	#define GLOBAL_DL_BUFFER_START ((void*) global_dl_buf)
+	#define GLOBAL_DL_BUFFER_END ((void*) global_dl_buf + sizeof(global_dl_buf))
 #endif
 
 scratchpad static dl_t* global_dl;

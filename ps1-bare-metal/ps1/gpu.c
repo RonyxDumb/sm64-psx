@@ -208,13 +208,15 @@ static void set_spu_transfer(unsigned addr, unsigned mode) {
 	waitForSPUDMADone();
 }
 
-void clearOrderingTable(uint32_t *table, int numEntries) {
+void startOrderingTableClear(uint32_t *table, int numEntries) {
 	DMA_MADR(DMA_OTC) = (uint32_t) &table[numEntries - 1];
 	DMA_BCR (DMA_OTC) = numEntries;
 	DMA_CHCR(DMA_OTC) = 0
 		| DMA_CHCR_READ | DMA_CHCR_REVERSE | DMA_CHCR_MODE_BURST
 		| DMA_CHCR_ENABLE | DMA_CHCR_TRIGGER;
+}
 
+void awaitOrderingTableClear() {
 	while (DMA_CHCR(DMA_OTC) & DMA_CHCR_ENABLE)
 		__asm__ volatile inline("");
 }

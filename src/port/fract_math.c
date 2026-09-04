@@ -32,7 +32,22 @@ static const uint8_t isqrt_tab[193] = {
     if(x <= 1) {
 		return x;
 	}
-    u32 lz = __builtin_clz(x) & 30;
+	u32 lz;
+#ifdef TARGET_PSX
+	asm(
+		".set push\n"
+		"mtc2 %1, $30\n" // set lzcs
+		"bltz %1, .Lzero%=\n" // set to 0
+		"li %0, 0\n"
+		"mfc2 %0, $31\n" // get lzcr
+		".Lzero%=:"
+		".set pop\n"
+		: "=r"(lz) : "r"(x)
+	);
+#else
+    lz = __builtin_clz(x);
+#endif
+	lz &= 30;
     x <<= lz;
     uint16_t y = 1 + isqrt_tab[(x >> 24) - 64];
     y = (y << 7) + (x >> 9) / y;

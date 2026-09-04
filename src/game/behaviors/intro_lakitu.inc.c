@@ -81,27 +81,9 @@ void bhv_intro_lakitu_loop(void) {
             if (gCutsceneTimer > 52)
                 cur_obj_play_sound_1(SOUND_AIR_LAKITU_FLY_HIGHPRIO);
 
-            /*
-             * PSX fixed-point safeguard:
-             * move_point_along_splineq() can quantize the progress value such that
-             * the spline visually reaches its end but never reports completion.
-             * That leaves Lakitu permanently in action 1 while the intro camera
-             * continues into the dialog section.
-             *
-             * Preserve normal spline completion, but use the original intro timing
-             * as a deterministic fallback so Lakitu always advances to action 2.
-             */
-            s32 lakituSplineFinished =
-                intro_lakitu_set_pos_and_focus(gCurrentObject,
-                                               gIntroLakituStartToPipeOffsetFromCamera,
-                                               gIntroLakituStartToPipeFocus);
-
-#ifdef VERSION_EU
-            if (lakituSplineFinished == 1 || gCutsceneTimer > 590)
-#else
-            if (lakituSplineFinished == 1 || gCutsceneTimer > 710)
-#endif
-                gCurrentObject->oAction = 2;
+            if (intro_lakitu_set_pos_and_focus(gCurrentObject, gIntroLakituStartToPipeOffsetFromCamera,
+                                               gIntroLakituStartToPipeFocus) == 1)
+                gCurrentObject->oAction += 1;
 
             switch (gCurrentObject->oTimer) {
 #if defined(VERSION_US) || defined(VERSION_SH)

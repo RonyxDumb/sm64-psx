@@ -1,38 +1,94 @@
-# Super Mario 64 (PS1 Port)
-Questo repository è un fork del progetto di [de-compilazione completa di Super Mario 64](https://github.com/n64decomp/sm64). È stato fortemente modificato per rimuovere il target Nintendo 64 e mirare esclusivamente all'hardware di **Sony PlayStation (PSX / PS1)**.
+> # Migrated to https://codeberg.org/malucart/sm64-psx! Go there instead!
 
----
+# Super Mario 64 (DualShock Version)
 
-## Modifiche, Fix e Ottimizzazioni Sviluppate
+- This is a fork of [the full decompilation of Super Mario 64 (J), (U), (E), and (SH)](https://github.com/n64decomp/sm64).
+- It is heavily modified and can no longer target Nintendo 64, only PSX and PC (for debugging).
+- There are still many limitations.
+- For now, it can only build from the US version.
 
-In questa versione sono stati risolti diversi colli di bottiglia critici per permettere l'esecuzione stabile sia su emulatore che su **hardware originale (PS1)**:
+This repo does not include all assets necessary for compiling the game.
+An original copy of the game is required to extract the assets.
 
-### 1. Ottimizzazione del Grafo di Rendering (`node_rendered.c` / Engine Graph)
-* **Riscrittura del Walk-Graph dei Nodi:** La gestione originale del rendering basata sul percorso dei nodi (`node_rendered.c` / `gfx_dimensions` / render walker) è stata alleggerita per l'architettura MIPS/GTE della PS1.
-* **Riduzione dell'Overhead in Memoria:** Eliminati i calcoli ridondanti in virgola mobile nei nodi di trasformazione, sostituendoli con chiamate dirette a matrici a punto fisso (Fixed-Point Math) compatibili con la GTE.
-* **Pulizia del Loop di Passaggio dei Livelli:** Ridotta la frammentazione della RAM durante l'attraversamento e il rendering dell'albero dei nodi grafici, prevenendo i crash di saturazione della memoria (OOM su 2MB RAM) quando si entra nelle mappe di gioco.
+## Features
 
-### 2. Driver CD-ROM e Gestione I/O (`cd_psx.c`)
-* **Risoluzione Deadlock su Disco Reale:** Corretto il ciclo di attesa degli interrupt nel driver CD bare-metal. In precedenza, in caso di errori di lettura (`INT5`) o riposizionamento della lente (*seek retry*), il sistema entrava in un loop bloccante che faceva spegnere la rotazione del motore CD.
-* **Sistema di Retry e Timeout sui Settori:** Inserito un sistema di riprovazione automatica (`CD_MAX_RETRIES`) e timeout sul segnale `DRQ` (Data Request) e DMA.
-* **Ricerca Difensiva nel File System ISO-9660:** Aggiunta la gestione a tentativi multipli durante la lettura del Volume Descriptor per la localizzazione di `EXT.DAT;1`.
+- Cool "DUAL SHOCK™ Compatible" graphic mimicking the original "振動パック対応" (Rumble Pak Compatible) graphic
+- An analog rumble signal is now produced for the DualShock's large motor, in addition to the original modulated digital signal for the small motor and for the SCPH-1150 Dual Analog Controller
+- Low-precision soft float implementation specially written for PSX to reduce the performance impact of floats
+- Large amounts of code have been adapted to use fixed point math, including the 16-bit integer vectors and matrices that are standard on PSX
+- Simplified rewritten render graph walker
+- Tessellation (up to 2x) to reduce issues with large polygons
+- RSP display lists are compiled just-in-time into a custom display list format that is more compact and faster to process
+- Display list preprocessor that removes commands we won't use and optimizes meshes (TODO: make it fix more things)
+- Mario's animations are compressed (from 580632 to 190324 bytes) and placed in a corner of VRAM rather than being loaded from storage (we don't have the luxury of a fast cartridge to read from in the middle of a frame)
+- Custom profiler
+- Custom texture encoder that quantizes all textures to 4 bits per pixel
+- Translucent texture shadows replaced with subtractive hexagonal shadows, as the PSX doesn't support arbitrary translucency
+- (WIP) Camera system adapted to rotate with the right analog stick
+- (WIP) Simplified rewritten Goddard subsystem
 
----
+## Known issues
 
-## Caratteristiche Principali (Features)
+- Some of Mario's animations do not play, and may even crash the game
+- Music cannot be generated at build time without manually obtaining the tracks
+- Sound effects work but sometimes sound odd or are missing notes
+- The camera cannot be controlled in many levels due to the unfinished camera control implementation
+- Crashes when entering certain levels (due to insufficient memory?)
+- Ending sequence crashes on load
+- When reaching the bridge in the castle grounds, Mario looks up but Lakitu never comes over (you need to do the Lakitu skip)
+- Poles do not go down when pounded
+- Textures are loaded individually, causing long stutters and loading times
+- Stretched textures due to PSX limitations (the graphics preprocessor could help)
+- Tessellation is not good enough to fix all large polygons (the graphics preprocessor could help)
+- Some textures are rendered incorrectly (RSP JIT issues?)
+- Title screen is unfinished
+- Pause menu doesn't work
 
-* **Supporto DUALSHOCK™:** Implementata la grafica "DUAL SHOCK™ Compatible" con supporto alla vibrazione analogica per il motore grande del controller.
-* **Matematica Fixed-Point Personalizzata:** Convertiti i vettori a 16-bit e le matrici per sfruttare appieno l'hardware grafico della PS1.
-* **JIT Display Lists & Tessellazione:** Conversione al volo delle Display List dell'RSP N64 in una struttura più compatta con tessellazione dei poligoni estesi (fino a 2x) per attenuare il flickering della GPU PS1.
-* **Compressione Animazioni in VRAM:** Le animazioni di Mario sono compresse (da ~580 KB a ~190 KB) e allocate in una sezione protetta della VRAM per evitare letture da CD durante l'esecuzione del frame.
-* **Encoder Texture a 4-bit (16 Colori):** Quantizzazione automatica di tutte le texture per rientrare nella memoria VRAM.
+## Building
 
----
+1. Place a *Super Mario 64* ROM named exactly `baserom.us.z64` into the repository's root directory. For now, only US ROMs are supported.
+2. (Optional) Create a folder named `.local` in the root of the repo and place every track of the soundtrack in it as a .wav file, numbered from 0 to 37 (0.wav, 1.wav, etc). See [here](https://codeberg.org/malucart/sm64-psx/issues/14#issuecomment-20591789) for the full track list. Don't worry too much about this step, you can just skip it and play without background music. One day this will be done automatically, but it will take some work, so it's low priority.
+3. Now you need a properly set up build environment. A Dockerfile is provided to simplify this. To use it, ensure you have [Docker](https://www.docker.com) (or a compatible alternative) installed and set up. (if on Linux, don't forget to put it in [rootless mode](https://docs.docker.com/engine/security/rootless/) as well!)
+	- If on Linux, I've included a convenience script for invoking a container from a terminal. Run `./idc` to enter a Bash shell in the container, or `./idc <command>` to run one command in it (for example, `./idc make` or `./idc make clean`). If this works for you, go to step 4.
+	- If using Zed (any OS), containers are supported right away. Open the repo, press Ctrl+Shift+P, and run the "projects: open dev container" action. The editor will act like it's running inside the container, including the terminal. Open the terminal panel in Zed and go to step 4.
+	- If using Visual Studio Code (any OS), you can simply install the Dev Containers extension, open the repository, and click "Reopen in Container" (either from the notification, or from the Ctrl+Shift+P menu). The editor will act like it's running inside the container, including the terminal. Open the terminal panel in VS Code and go to step 4.
+	- Alternatively, if you plan to do a lot of PS1 development, you can skip the container and simply have the right things installed on your system, but this is the harder option. You must be using Linux (any). You need FFMPEG's libraries, libpng, xxd, Python 3, meson, GCC or Clang, and version 15 or later of the mipsel-none-elf-gcc toolchain. To build and install mipsel-none-elf-gcc, there is a utility in [this other repo](https://github.com/malucard/poeng). Clone it and run `make install-gcc`. It will take a pretty long time. Then see if step 4 works for you.
+4. Simply run `make`, and when it's done, sm64.iso and sm64.cue will be placed in the `build/us_psx/` folder (you can either use the iso file alone, or the cue file if it's required; iso+cue is the same thing as bin+cue). As long as you have a way to boot the game, it should work on regular old PS1 hardware. If you're using an emulator, you may want to enable an 8 MB RAM mode in the settings to reduce crashes, since the game is still so constrained.
+	- If you want to debug the game and work on it, run `make DEBUG=1` instead. This mode will require 8 MB of RAM (it will not work on a retail console), and it will be even laggier than normal, but it may catch more bugs in the code instead of crashing mysteriously. (note: don't optimize code based on how it runs in this mode!)
+	- On the debugging topic, PCSX-Redux is recommended. First enable the debugger, disable dynarec, and ensure the OpenGL GPU is off. Open sm64.cue from "File > Open Disk Image" first, but then load sm64.elf manually from "File > Load binary" before starting the game, so the emulator can read the debugging symbols. You don't have to reopen the iso/cue every time you recompile (unless the "Preload Disk Image files" option is on), but you do have to reload the elf. See the "Debug" tab for some utilities ("Show Logs", "Show Assembly", and "Show Callstacks" are the most important).
+	- If you want to automatically benchmark the game, run `make BENCH=1` instead. This mode also requires 8 MB of RAM (it will not work on a retail console), but it doesn't require a CD, and it will boot directly into a level without requiring any inputs.
+	- `make clean` will delete the `build` folder, and `make distclean` will do that but also clean up the `tools` folder (ie. `make -C tools clean`). Basically, run `make distclean` to clean everything and start from scratch if your environment changed or you're having sudden issues.
 
-## Problemi Noti (Known Issues)
+## Project Structure
 
-* **Limiti RAM (2 MB Retail):** Alcuni livelli o sequenze animate particolarmente dense potrebbero saturare i 2 MB di RAM standard. Su emulatore si raccomanda di abilitare l'opzione **8 MB RAM**.
-* **Tracce Audio:** La musica di sottofondo richiede l'estrazione manuale delle tracce in formato `.wav` dentro la cartella `.local/` prima di avviare la compilazione.
-* **Distorsione Texture:** Assenza di correzione prospettica hardware sulla GPU della PS1, che può causare un leggero effetto "wobble" o distorsione sulle superfici ampie.
+	sm64
+	├── actors: object behaviors, geo layout, and display lists
+	├── assets: animation and demo data
+	│   ├── anims: animation data
+	│   └── demos: demo data
+	├── bin: C files for ordering display lists and textures
+	├── build: output directory
+	├── data: behavior scripts, misc. data
+	├── doxygen: documentation infrastructure
+	├── enhancements: example source modifications
+	├── include: header files
+	├── levels: level scripts, geo layout, and display lists
+	├── lib: N64 SDK code
+	├── sound: sequences, sound samples, and sound banks
+	├── src: C source code for game
+	│   ├── audio: audio code
+	│   ├── buffers: stacks, heaps, and task buffers
+	│   ├── engine: script processing engines and utils
+	│   ├── game: behaviors and rest of game source
+	│   ├── goddard: rewritten Mario intro screen
+	│   ├── goddard_og: backup of original Mario intro screen
+	│   ├── menu: title screen and file, act, and debug level selection menus
+	│   └── port: port code, audio and video renderer
+	├── text: dialog, level names, act names
+	├── textures: skybox and generic texture data
+	└── tools: build tools
 
----
+## Contributing
+
+Pull requests are welcome. For major changes, please open an issue first to
+discuss what you would like to change.

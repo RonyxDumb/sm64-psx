@@ -9,8 +9,8 @@
 
 // VRAM is composed of two rows of 16 64x256 pages, 32 pages total
 // the first 10 pages (640 pixels) are taken up by the dual 320x240 framebuffers
-// here we dedicate the next few to specific texture sizes, and cram the palettes somewhere
-// but we also reserve a bunch of pages for mario's unreasonably large animation data
+// the last pages in the first row are taken up by mario's unreasonably large animation data
+// here we dedicate pages on the lower half of vram to specific texture sizes, and cram the palettes after them
 
 // these values can be configured but must stay in this order
 #define FIRST_PAGE_128x32 16
@@ -78,8 +78,10 @@ static void upload_texture(u32 vram_x, u32 vram_y, u32 clut_idx, void* tex_data,
 		clut_y = 240 + clut_idx / HIGH_CLUTS_PER_ROW;
 		clut_x = clut_idx % HIGH_CLUTS_PER_ROW * 16;
 	}
-	sendVRAMData(pixel_data, clut_x, clut_y, 16, 1);
-	sendVRAMData(pixel_data + 16 * 2, vram_x, vram_y, vram_width, height);
+
+	sendVRAMData(pixel_data, clut_x, clut_y, 16, 1); // upload clut
+	sendVRAMData(pixel_data + 16 * 2, vram_x, vram_y, vram_width, height); // upload pixels
+
 	tex->page_attr = gp0_page(vram_x / 64, vram_y / 256, GP0_BLEND_SEMITRANS, GP0_COLOR_4BPP);
 	tex->clut_attr = gp0_clut(clut_x / 16, clut_y);
 	tex->offx = vram_x % 64 * (16 / BPP);
@@ -93,16 +95,20 @@ UNUSED extern u8 _texture_data_segment_end[];
 	assert(tex_ptr);
 	TexHeader* tex_header = tex_ptr;
 	if(((u32) tex_header->window_cmd >> 24) == ((u32) GP0_CMD_TEXWINDOW >> 24)) {
-		return;
+		return; // already loaded
 	}
 	const void* dma_begin_addr = _texture_data_segment + tex_header->pixel_data_sector * 2048;
-	ALIGNED4 u8 pixel_data[tex_header->pixel_data_sector_count * 2048];
+	u8 alignas(u32) pixel_data[tex_header->pixel_data_sector_count * 2048];
+
+	// dma_read may show a loading screen, but the loading screen needs to load the font, so temporarily prevent that
 	bool prev_can_show_screen_message = can_show_screen_message;
 	can_show_screen_message = false;
 	dma_read(pixel_data, dma_begin_addr, dma_begin_addr + tex_header->pixel_data_sector_count * 2048);
 	can_show_screen_message = prev_can_show_screen_message;
+
 	u16 width = tex_header->width;
 	u16 height = tex_header->height;
+
 	u32 aligned_width, aligned_height;
 	u32 vram_x, vram_y, slot_idx;
 	if(width <= 8 && height <= 16) {

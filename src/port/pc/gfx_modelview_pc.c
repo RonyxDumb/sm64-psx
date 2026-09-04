@@ -21,11 +21,11 @@ void gfx_modelview_set(const ShortMatrix* new_modelview) {
 
 ShortMatrix gfx_modelview_get(void) {
 	ShortMatrix mv = modelview;
-	//mtx_transpose(&mv);
-	//for(int i = 0; i < 3; i++) {
-	//mv.m[i][2] *= -1;
-	//}
-	//mv.t[2] *= -1;
+	// mtx_transpose(&mv);
+	// for(int i = 0; i < 3; i++) {
+	// 	mv.m[i][2] *= -1;
+	// }
+	// mv.t[2] *= -1;
 	return mv;
 }
 
@@ -49,18 +49,18 @@ void gfx_modelview_mul(const ShortMatrix* o) {
 ShortVec gfx_modelview_apply_without_translation(const ShortVec* v) {
 	ShortMatrix m = gfx_modelview_get();
 	return (ShortVec) {
-		.vx = ((s32) v->vx * m.m[0][0] + (s32) v->vy * m.m[1][0] + (s32) v->vz * m.m[2][0]) / ONE,
-		.vy = ((s32) v->vx * m.m[0][1] + (s32) v->vy * m.m[1][1] + (s32) v->vz * m.m[2][1]) / ONE,
-		.vz = ((s32) v->vx * m.m[0][2] + (s32) v->vy * m.m[1][2] + (s32) v->vz * m.m[2][2]) / ONE
+		.x = ((s32) v->x * m.m[0][0] + (s32) v->y * m.m[1][0] + (s32) v->z * m.m[2][0]) / ONE,
+		.y = ((s32) v->x * m.m[0][1] + (s32) v->y * m.m[1][1] + (s32) v->z * m.m[2][1]) / ONE,
+		.z = ((s32) v->x * m.m[0][2] + (s32) v->y * m.m[1][2] + (s32) v->z * m.m[2][2]) / ONE
 	};
 }
 
 ShortVec gfx_modelview_apply(const ShortVec* v) {
 	ShortMatrix m = gfx_modelview_get();
 	return (ShortVec) {
-		.vx = ((s32) v->vx * m.m[0][0] + (s32) v->vy * m.m[1][0] + (s32) v->vz * m.m[2][0]) / ONE + m.t[0],
-		.vy = ((s32) v->vx * m.m[0][1] + (s32) v->vy * m.m[1][1] + (s32) v->vz * m.m[2][1]) / ONE + m.t[1],
-		.vz = ((s32) v->vx * m.m[0][2] + (s32) v->vy * m.m[1][2] + (s32) v->vz * m.m[2][2]) / ONE + m.t[2]
+		.x = ((s32) v->x * m.m[0][0] + (s32) v->y * m.m[1][0] + (s32) v->z * m.m[2][0]) / ONE + m.t[0],
+		.y = ((s32) v->x * m.m[0][1] + (s32) v->y * m.m[1][1] + (s32) v->z * m.m[2][1]) / ONE + m.t[1],
+		.z = ((s32) v->x * m.m[0][2] + (s32) v->y * m.m[1][2] + (s32) v->z * m.m[2][2]) / ONE + m.t[2]
 	};
 }
 
@@ -71,22 +71,22 @@ void gfx_modelview_translatei(const short off[3]) {
 
 void gfx_modelview_get_rotation_into(ShortMatrix* mtx) {
 	ShortMatrix modelview = gfx_modelview_get();
-	memcpy(mtx->m, modelview.m, 2 * 3 * 3);
+	memcpy(mtx->m, modelview.m, sizeof(modelview.m));
 }
 
 void gfx_modelview_get_translation_into(ShortMatrix* mtx) {
 	ShortMatrix modelview = gfx_modelview_get();
-	memcpy(mtx->t, modelview.t, 2 * 3);
+	memcpy(mtx->t, modelview.t, sizeof(modelview.t));
 }
 
 void gfx_modelview_set_rotation_from(const ShortMatrix* mtx) {
 	ShortMatrix modelview = gfx_modelview_get();
-	memcpy(modelview.m, mtx->m, 2 * 3 * 3);
+	memcpy(modelview.m, mtx->m, sizeof(modelview.m));
 	gfx_modelview_set(&modelview);
 }
 
 void gfx_modelview_set_translation_from(const ShortMatrix* mtx) {
 	ShortMatrix modelview = gfx_modelview_get();
-	memcpy(modelview.t, mtx->t, 2 * 3);
+	memcpy(modelview.t, mtx->t, sizeof(modelview.t));
 	gfx_modelview_set(&modelview);
 }

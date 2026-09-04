@@ -16,7 +16,6 @@
 #include "surface_load.h"
 #include "math_util.h"
 #include <assert.h>
-#include <stdio.h>
 
 /**
  * Partitions for course and object surfaces. The arrays represent
@@ -31,38 +30,23 @@ SpatialPartitionCell gDynamicSurfacePartition[NUM_CELLS][NUM_CELLS];
 struct SurfaceNode *sSurfaceNodePool;
 struct Surface *sSurfacePool;
 
-#ifdef TARGET_PSX
-/*
- * PS1 has only 2 MiB of RAM. The original collision pools are sized for the
- * theoretical worst case and can make Castle Inside fail before terrain is
- * even parsed. These runtime capacities let us shrink the reservation to the
- * RAM that is actually available while keeping the existing pool code.
- */
-u32 gPsxSurfaceNodePoolCapacity;
-u32 gPsxSurfacePoolCapacity;
-u32 gPsxSurfacePoolBytesReserved;
-#endif
-
 u8 unused8038EEA8[0x30];
 
 /**
  * Allocate the part of the surface node pool to contain a surface node.
  */
 static struct SurfaceNode *alloc_surface_node(void) {
-    // Check before indexing: the old code formed an out-of-range pointer and
-    // incremented the counter before asserting, which can corrupt RAM in NDEBUG builds.
-#ifdef TARGET_PSX
-    if ((u32) gSurfaceNodesAllocated >= gPsxSurfaceNodePoolCapacity) {
-        return NULL;
-    }
-#else
-    if (gSurfaceNodesAllocated >= SURFACE_NODE_POOL_LEN) {
-        return NULL;
-    }
-#endif
+    struct SurfaceNode *node = &sSurfaceNodePool[gSurfaceNodesAllocated];
+    gSurfaceNodesAllocated++;
 
-    struct SurfaceNode *node = &sSurfaceNodePool[gSurfaceNodesAllocated++];
     node->next = NULL;
+
+    //! A bounds check! If there's more surface nodes than 7000 allowed,
+    //  we, um...
+    // Perhaps originally just debug feedback?
+    // replaced it with an assert
+    assertm(gSurfaceNodesAllocated < SURFACE_NODE_POOL_LEN, "surface node pool full");
+
     return node;
 }
 
@@ -71,17 +55,14 @@ static struct SurfaceNode *alloc_surface_node(void) {
  * initialize the surface.
  */
 static struct Surface *alloc_surface(void) {
-#ifdef TARGET_PSX
-    if ((u32) gSurfacesAllocated >= gPsxSurfacePoolCapacity) {
-        return NULL;
-    }
-#else
-    if (gSurfacesAllocated >= SURFACE_POOL_LEN) {
-        return NULL;
-    }
-#endif
+    struct Surface *surface = &sSurfacePool[gSurfacesAllocated];
+    gSurfacesAllocated++;
 
-    struct Surface *surface = &sSurfacePool[gSurfacesAllocated++];
+    //! A bounds check! If there's more surfaces than the 2300 allowed,
+    //  we, um...
+    // Perhaps originally just debug feedback?
+    // replaced with an assert
+    assertm(gSurfacesAllocated < SURFACE_POOL_LEN, "surface pool full");
 
     surface->type = 0;
     surface->force = 0;
@@ -123,9 +104,6 @@ static void clear_static_surfaces(void) {
  */
 static void add_surface_to_cell(s16 dynamic, s16 cellX, s16 cellZ, struct Surface *surface) {
     struct SurfaceNode *newNode = alloc_surface_node();
-    if (newNode == NULL) {
-        return;
-    }
     struct SurfaceNode *list;
     s16 surfacePriority;
     s16 priority;
@@ -376,9 +354,6 @@ static struct Surface *read_surface_data(s16 *vertexData, s16 **vertexIndices) {
     nz *= mag;
 
     surface = alloc_surface();
-    if (surface == NULL) {
-        return NULL;
-    }
 
     surface->vertex1[0] = x1;
     surface->vertex2[0] = x2;
@@ -545,67 +520,8 @@ static void load_environmental_regions(s16 **data) {
  * Allocate some of the main pool for surfaces (2300 surf) and for surface nodes (7000 nodes).
  */
 void alloc_surface_pools(void) {
-#ifdef TARGET_PSX
-    /*
-     * Leave a small safety margin for allocations that happen after collision
-     * setup. Use the rest proportionally between Surface and SurfaceNode pools.
-     *
-     * This is deliberately capacity-aware rather than blindly lowering global
-     * constants: lighter levels still get the original maximums, while heavy
-     * levels such as Castle Inside no longer crash just because the worst-case
-     * collision reservation does not fit.
-     */
-    const u32 safetyReserve = 12 * 1024;
-    const u32 maxSurfaceBytes = SURFACE_POOL_LEN * sizeof(struct Surface);
-    const u32 maxNodeBytes = SURFACE_NODE_POOL_LEN * sizeof(struct SurfaceNode);
-    const u32 maxTotalBytes = maxSurfaceBytes + maxNodeBytes;
-
-    u32 available = main_pool_available();
-    u32 usable = (available > safetyReserve) ? (available - safetyReserve) : available;
-
-    if (usable >= maxTotalBytes) {
-        gPsxSurfacePoolCapacity = SURFACE_POOL_LEN;
-        gPsxSurfaceNodePoolCapacity = SURFACE_NODE_POOL_LEN;
-    } else {
-        /*
-         * Split the available RAM in the same proportion as the original pool
-         * budget. Clamp to at least one element so allocation code remains valid.
-         */
-        u32 surfaceBudget = (u32) (((u64) usable * maxSurfaceBytes) / maxTotalBytes);
-        u32 nodeBudget = usable - surfaceBudget;
-
-        gPsxSurfacePoolCapacity = surfaceBudget / sizeof(struct Surface);
-        gPsxSurfaceNodePoolCapacity = nodeBudget / sizeof(struct SurfaceNode);
-
-        if (gPsxSurfacePoolCapacity > SURFACE_POOL_LEN) {
-            gPsxSurfacePoolCapacity = SURFACE_POOL_LEN;
-        }
-        if (gPsxSurfaceNodePoolCapacity > SURFACE_NODE_POOL_LEN) {
-            gPsxSurfaceNodePoolCapacity = SURFACE_NODE_POOL_LEN;
-        }
-        if (gPsxSurfacePoolCapacity == 0) {
-            gPsxSurfacePoolCapacity = 1;
-        }
-        if (gPsxSurfaceNodePoolCapacity == 0) {
-            gPsxSurfaceNodePoolCapacity = 1;
-        }
-
-        printf("PSX collision pools reduced: surfaces %u/%u, nodes %u/%u, free %u\n",
-               gPsxSurfacePoolCapacity, (u32) SURFACE_POOL_LEN,
-               gPsxSurfaceNodePoolCapacity, (u32) SURFACE_NODE_POOL_LEN,
-               available);
-    }
-
-    u32 surfaceBytes = gPsxSurfacePoolCapacity * sizeof(struct Surface);
-    u32 nodeBytes = gPsxSurfaceNodePoolCapacity * sizeof(struct SurfaceNode);
-    gPsxSurfacePoolBytesReserved = surfaceBytes + nodeBytes;
-
-    sSurfaceNodePool = main_pool_alloc(nodeBytes, MEMORY_POOL_LEFT);
-    sSurfacePool = main_pool_alloc(surfaceBytes, MEMORY_POOL_LEFT);
-#else
     sSurfaceNodePool = main_pool_alloc(SURFACE_NODE_POOL_LEN * sizeof(struct SurfaceNode), MEMORY_POOL_LEFT);
     sSurfacePool = main_pool_alloc(SURFACE_POOL_LEN * sizeof(struct Surface), MEMORY_POOL_LEFT);
-#endif
 
     gCCMEnteredSlide = 0;
     reset_red_coins_collected();

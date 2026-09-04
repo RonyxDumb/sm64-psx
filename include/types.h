@@ -73,12 +73,13 @@ typedef ALIGNED4 struct {
 
 typedef ALIGNED4 union {
 	struct {
-		s16 vx, vy, vz, _pad;
+		s16 x, y, z, w;
 	};
 	struct {
-		s32 vx_vy, vz_pad;
+		s32 xy, zw;
 	};
 	s16 elems[4];
+	u32 as_u32;
 } ShortVec;
 
 // Certain functions are marked as having return values, but do not

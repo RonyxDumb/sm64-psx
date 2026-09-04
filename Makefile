@@ -39,29 +39,46 @@ else ifeq ($(VERSION),sh)
 	VERSION_JP_US ?= false
 endif
 
-BIG_RAM ?= 0
-BENCH ?= 0
-ifneq ($(BENCH),0)
+# debugging defines:
+# USE_FLOATS: revert some of the fixed point math replacements to float versions (hasn't been needed for a while!)
+# NO_SCRATCHPAD: disable scratchpad usage
+# NO_KERNEL_RAM: disable abuse of the kernel area in ram (the first 64kb)
+# BIG_RAM: make use of 8MB mode
+# BENCH: store all assets in ram, boot into a level directly
+# SAFE_GTE: inserts nops before GTE commands
+ifeq ($(SAFE),1)
+	DEFINES += NO_SCRATCHPAD=1 NO_KERNEL_RAM=1 BIG_RAM=1 SAFE_GTE=1
+	BIG_RAM := 1
+	DEBUG := 1
+endif
+
+ifeq ($(PC),1)
+	DEBUG := 1
+endif
+
+ifeq ($(DEBUG),1)
+	DEFINES += BIG_RAM=1 DEBUG=1
+	BIG_RAM := 1
+endif
+
+ifeq ($(SERIAL),1)
+	DEFINES += SERIAL=1
+endif
+
+ifeq ($(BENCH),1)
 	DEFINES += BENCH=1
 	BIG_RAM := 1
 endif
-ifneq ($(BIG_RAM),0)
+
+ifeq ($(BIG_RAM),1)
 	DEFINES += BIG_RAM=1
 endif
-MARIO_HEAD ?= 0
-ifneq ($(MARIO_HEAD),0)
+
+ifeq ($(MARIO_HEAD),1)
 	DEFINES += MARIO_HEAD=1
 endif
 
 DEFINES += F3D_OLD=1 NON_MATCHING=1 AVOID_UB=1 NO_AUDIO=1
-
-ifeq ($(SATURN),1)
-	PLATFORM := saturn
-else ifeq ($(PC),1)
-	PLATFORM := pc
-else
-	PLATFORM := psx
-endif
 
 # Whether to hide commands or not
 VERBOSE ?= 0
@@ -75,8 +92,8 @@ COLOR ?= 1
 # display selected options unless 'make clean' or 'make distclean' is run
 ifeq ($(filter clean distclean,$(MAKECMDGOALS)),)
 	$(info ==== Build Options ====)
-	$(info Platform:           $(PLATFORM))
-	$(info Region:             $(VERSION))
+	$(info Platform:           psx)
+	$(info Region:              $(VERSION))
 	$(info =======================)
 endif
 
@@ -92,14 +109,6 @@ TOOLS_DIR := tools
 # on tools and assets, and we use directory globs in the makefiles
 
 PYTHON := python3
-HOST_UNAME := $(shell uname -s 2>/dev/null || echo Unknown)
-ifeq ($(origin HOST_TOOL_EXEEXT), undefined)
-	ifneq ($(filter MINGW% MSYS% CYGWIN%,$(HOST_UNAME)),)
-		HOST_TOOL_EXEEXT := .exe
-	else
-		HOST_TOOL_EXEEXT :=
-	endif
-endif
 
 ifeq ($(filter clean distclean print-%,$(MAKECMDGOALS)),)
 	# Make sure assets exist
@@ -111,26 +120,22 @@ ifeq ($(filter clean distclean print-%,$(MAKECMDGOALS)),)
 		endif
 	endif
 
-	# Make the host tools needed by the selected platform.
+	# Make tools if out of date
 	$(info Building tools...)
-	ifeq ($(PLATFORM),pc)
-		DUMMY != $(MAKE) --no-print-directory -C $(TOOLS_DIR) host-tools HOST_TOOL_EXEEXT=$(HOST_TOOL_EXEEXT) >&2 || echo FAIL
-	else
-		DUMMY != $(MAKE) --no-print-directory -C $(TOOLS_DIR) all-except-recomp >&2 || echo FAIL
-	endif
+	DUMMY != $(MAKE) --no-print-directory -C $(TOOLS_DIR) >&2 || echo FAIL
 	ifeq ($(DUMMY),FAIL)
 		$(error Failed to build tools)
 	endif
 	$(info Building...)
 endif
 
-ifeq ($(PLATFORM),saturn)
+ifeq ($(SATURN),1)
 	include Makefile.ss.mk
-else ifeq ($(PLATFORM),pc)
+else ifeq ($(PC),1)
 	include Makefile.pc.mk
 else
 	include Makefile.psx.mk
 endif
 
-PSXAVENC := tools/psxavenc
-MKPSXISO := tools/mkpsxiso
+PSXAVENC := tools/build/psxavenc
+MKPSXISO := tools/build/mkpsxiso

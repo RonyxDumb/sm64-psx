@@ -8,14 +8,12 @@
 BUILD_DIR      := $(BUILD_DIR_BASE)/$(VERSION)_psx
 EXE            := $(BUILD_DIR)/sm64.exe
 ELF            := $(BUILD_DIR)/sm64.elf
-#ifeq ($(BENCH),0)
-LEVEL_DIRS := $(patsubst levels/%,%,$(dir $(wildcard levels/*/header.h)))
-ifneq ($(BENCH),0)
-	LEVEL_DIRS := $(filter-out castle_inside/ wmotr/ wdw/ ssl/,$(LEVEL_DIRS))
+ifeq ($(BENCH),1)
+	LEVEL_DIRS := bob/ intro/ menu/
+	#$(filter-out castle_inside/ wmotr/ wdw/ ssl/,$(LEVEL_DIRS))
+else
+	LEVEL_DIRS := $(patsubst levels/%,%,$(dir $(wildcard levels/*/header.h)))
 endif
-#else
-#	LEVEL_DIRS := bob/ ttm/
-#endif
 
 # Directories containing source files
 SRC_DIRS := src src/engine src/game src/audio src/menu src/buffers actors levels bin bin/$(VERSION) data assets sound
@@ -43,7 +41,7 @@ GODDARD_C_FILES      := $(foreach dir,$(GODDARD_SRC_DIRS),$(wildcard $(dir)/*.c)
 RAW_MODEL_C_FILES    := $(wildcard actors/*/model.inc.c) $(foreach dir,$(LEVEL_DIRS),$(wildcard levels/$(dir)*/model.inc.c) $(wildcard levels/$(dir)areas/*/*/model.inc.c) $(wildcard levels/$(dir)areas/*/model.inc.c))
 CONV_MODEL_C_FILES   := $(RAW_MODEL_C_FILES:%.c=$(BUILD_DIR)/%.processed.c)
 GENERATED_C_FILES    := $(BUILD_DIR)/sfx_defs.generated.c
-#$(foreach name,$(notdir $(basename $(wildcard textures/skyboxes/*.png))),$(BUILD_DIR)/bin/$(name)_skybox.c)
+SFX_DATA_BIN := $(BUILD_DIR)/sfx_data.generated.bin
 
 C_FILES := $(filter-out src/game/main.c,$(C_FILES))
 
@@ -61,7 +59,7 @@ GODDARD_O_FILES := $(GODDARD_C_FILES:%.c=$(BUILD_DIR)/%.o)
 
 LIBC_O_FILES := \
 	$(LIBC_C_FILES:%.c=$(BUILD_DIR)/%.o) \
-	$(LIBC_S_FILES:%.s=$(BUILD_DIR)/%.s.o)\
+	$(LIBC_S_FILES:%.s=$(BUILD_DIR)/%.s.o) \
 	$(LIBC_SPP_FILES:%.S=$(BUILD_DIR)/%.S.o)
 
 # Automatic dependency files
@@ -73,49 +71,51 @@ DEP_FILES := $(O_FILES:.o=.d) $(LEVEL_O_FILES:.o=.d) $(GODDARD_O_FILES:.o=.d) $(
 
 INCLUDE_DIRS := include $(BUILD_DIR) $(BUILD_DIR)/include src . include/libc ps1 ps1-bare-metal ps1-bare-metal/libc
 
-# debugging defines:
-# USE_FLOATS: revert some of the fixed point math replacements to float versions (hasn't been needed for a while!)
-# NO_INLINE: disable inlining and IPA in a few critical functions
-# NO_SCRATCHPAD: disable scratchpad usage
-# NO_KERNEL_RAM: disable abuse of the kernel area in ram (the first 64kb)
-# BIG_RAM: make use of 8MB mode, also store all assets in main ram
-# SAFE_GTE: inserts nops before GTE commands
-ifeq ($(SAFE),1)
-	DEFINES += NO_SCRATCHPAD=1 NO_KERNEL_RAM=1 BIG_RAM=1 SAFE_GTE=1 NO_INLINE=1
-endif
-
-ifeq ($(DEBUG),1)
-	DEFINES += BIG_RAM=1 NO_INLINE=1
-endif
-
-ifeq ($(SERIAL),1)
-	DEFINES += SERIAL=1
-endif
-
 DEFINES += TARGET_PSX=1 ENABLE_RUMBLE=1 RUMBLE_GRAPHIC=1
 C_DEFINES := $(foreach d,$(DEFINES),-D$(d))
 DEF_INC_CFLAGS := $(foreach i,$(INCLUDE_DIRS),-I$(i)) $(C_DEFINES)
 
-ifneq      ($(call find-command,mipsel-none-elf-gcc),)
+ifneq ($(call find-command,psx-gcc),)
+	CROSS := psx-
+	ARCH := psx
+else ifneq ($(call find-command,mipsel-psx-elf-gcc),)
+	CROSS := mipsel-psx-elf-
+	ARCH := psx
+else ifneq ($(call find-command,mipsel-sony-psx-gcc),)
+	CROSS := mipsel-sony-psx-
+	ARCH := psx
+else ifneq ($(call find-command,mipsel-none-elf-gcc),)
 	CROSS := mipsel-none-elf-
-else ifneq      ($(call find-command,mipsel-unknown-elf-gcc),)
+	ARCH := r3000
+else ifneq ($(call find-command,mipsel-unknown-elf-gcc),)
 	CROSS := mipsel-unknown-elf-
-else ifneq      ($(call find-command,mipsel-linux-gnu-gcc),)
+	ARCH := r3000
+else ifneq ($(call find-command,mipsel-linux-gnu-gcc),)
 	CROSS := mipsel-linux-gnu-
-else ifneq      ($(call find-command,mipsel-unknown-linux-gnu-gcc),)
+	ARCH := r3000
+else ifneq ($(call find-command,mipsel-unknown-linux-gnu-gcc),)
 	CROSS := mipsel-unknown-linux-gnu-
-else ifneq      ($(call find-command,mipsel-elf-gcc),)
+	ARCH := r3000
+else ifneq ($(call find-command,mipsel-elf-gcc),)
 	CROSS := mipsel-elf-
+	ARCH := r3000
+else ifneq ($(call find-command,mips64-linux-gnu-gcc),)
+	CROSS := mips64-linux-gnu-
+	ARCH := r3000
+else ifneq ($(call find-command,mips64el-linux-gnu-gcc),)
+	CROSS := mips64el-linux-gnu-
+	ARCH := r3000
 else
 	$(error Unable to detect a suitable MIPS toolchain installed)
 endif
 
-EXT_LD    := $(CROSS)ld
-AS        := $(CROSS)as
-AR        := $(CROSS)ar
-NM        := $(CROSS)nm
-OBJDUMP   := $(CROSS)objdump
-OBJCOPY   := $(CROSS)objcopy
+EXT_LD  := $(CROSS)gcc
+EXT_LDFLAGS := -EL -march=r3000 -mabi=eabi -mgp32 -nostdlib -ffreestanding -mno-abicalls -msoft-float
+AS      := $(CROSS)as
+AR      := $(CROSS)ar
+NM      := $(CROSS)nm
+OBJDUMP := $(CROSS)objdump
+OBJCOPY := $(CROSS)objcopy
 
 CC := $(CROSS)gcc
 LD := $(CC)
@@ -126,53 +126,69 @@ TARGET_CFLAGS := -Wall -Wextra -Wno-maybe-uninitialized -Wno-error=cpp -Wno-comm
 TARGET_CFLAGS += -O2
 
 # necessary ABI and environment flags
-TARGET_CFLAGS += -march=r3000 -mtune=r3000 \
-	-mabi=eabi -mno-abicalls -EL -fcall-used-k0 -fcall-used-k1 -freg-struct-return \
+TARGET_CFLAGS += -march=$(ARCH) \
+	-mabi=eabi -mno-abicalls -mgp32 -EL -fcall-saved-k0 -fcall-saved-k1 -freg-struct-return \
 	-mfp32 -msingle-float -fsingle-precision-constant -mno-fp-exceptions -msoft-float \
 	-fno-builtin -nostdinc -nostdlib -mno-mt -fno-pic -fno-PIC -fsigned-char \
-	-static -mno-shared -fomit-frame-pointer -fno-stack-protector -mno-llsc \
-	-ffreestanding -mno-extern-sdata -fno-common -fno-zero-initialized-in-bss \
+	-static -mno-shared -fomit-frame-pointer -fno-stack-protector \
+	-mno-llsc -fallow-store-data-races \
+	-ffreestanding -mno-extern-sdata -fno-common -fzero-initialized-in-bss \
 	-include include/stdbool.h $(DEF_INC_CFLAGS) -D_LANGUAGE_C
 
-TARGET_CFLAGS += -ffunction-sections -fdata-sections -Wl,--gc-sections
+TARGET_CFLAGS += -ffunction-sections -fdata-sections
 
-# this can hurt performance (appears to be no longer needed)
-# TARGET_CFLAGS += -fconserve-stack
+# this can hurt performance (maybe remove it one day)
+#TARGET_CFLAGS += -fconserve-stack
 
 # objectively correct optimization flags
 TARGET_CFLAGS += -fstrict-aliasing -fstrict-overflow -mno-check-zero-division -ffast-math -ffp-contract=fast \
-	-flimit-function-alignment -falign-functions=16:8 -fno-align-labels -fno-align-jumps -falign-loops=16:8 \
+	-falign-functions=16:8 -falign-loops=16:8 -fno-align-labels -fno-align-jumps \
+	-flimit-function-alignment \
 	--param l1-cache-line-size=0 --param l1-cache-size=0 --param l2-cache-size=0 \
-	-fsection-anchors -Wa,--strip-local-absolute -fallow-store-data-races -favoid-store-forwarding \
-	-fno-semantic-interposition
+	-Wa,--strip-local-absolute -fsection-anchors -fno-semantic-interposition
 
-# experiment zone
-TARGET_CFLAGS += -free -fira-loop-pressure -fpredictive-commoning -fsched-pressure -fsched-spec-load \
-	-ftree-pre -ftree-partial-pre -ftree-loop-im -ftree-loop-distribution -floop-interchange -freorder-blocks-algorithm=simple \
-	-fweb -frename-registers -fgcse-sm -fgcse-las -fgcse-after-reload \
-	-fipa-pta -fipa-icf -fipa-reorder-for-locality -fipa-bit-cp -fipa-vrp \
-	-fno-prefetch-loop-arrays -fsched-pressure -fsched-spec-load
+ifneq ($(DEBUG),1)
+	# experiment zone
+	TARGET_CFLAGS += -free -fpredictive-commoning -fsched-pressure -fsched-spec-load \
+		-ftree-pre -ftree-partial-pre \
+		-fira-loop-pressure -ftree-loop-im \
+		-fno-prefetch-loop-arrays \
+		-fweb -frename-registers -fgcse-sm -fgcse-las -fgcse-after-reload \
+		-favoid-store-forwarding \
+		-fipa-pta -fipa-icf -fipa-bit-cp -fipa-vrp \
+		-freorder-blocks-algorithm=simple \
+		-ffold-mem-offsets \
+		-fmodulo-sched -fmodulo-sched-allow-regmoves \
+		-fschedule-insns -fschedule-insns2 -fsched-pressure \
+		-fira-hoist-pressure -fno-ira-share-save-slots \
+		-fno-prefetch-loop-arrays -fsched-pressure -fsched-spec-load \
+		-fext-dce \
+		-fdevirtualize-speculatively
+	# -freorder-blocks-and-partition causes an error for some reason
+endif
 
 # -O3 territory 🥶
 #TARGET_CFLAGS += -fipa-cp-clone -ftracer \
 #	-floop-interchange -floop-unroll-and-jam -fpeel-loops \
 #	-fsplit-loops -fsplit-paths -funswitch-loops -fversion-loops-for-strides
 
-ifeq ($(filter 1,$(SAFE) $(DEBUG)),1)
+ifeq ($(DEBUG),1)
+	TARGET_CFLAGS += -fsanitize=unreachable,bounds -UNDEBUG -fno-inline -g
+else ifeq ($(SAFE),1)
 	TARGET_CFLAGS += -fsanitize=unreachable,bounds -UNDEBUG
 else
-	TARGET_CFLAGS += -DNDEBUG -Werror
+	TARGET_CFLAGS += -DNDEBUG
 endif
 
 # C compiler options
-CFLAGS := -std=gnu2x --embed-dir=$(BUILD_DIR) $(TARGET_CFLAGS) $(if $(filter 1,$(SAFE) $(DEBUG)),-G8,-G32)
+CFLAGS := -std=gnu2x --embed-dir=$(BUILD_DIR) $(TARGET_CFLAGS) $(if $(filter 1,$(SAFE) $(DEBUG)),-G8,-G16) -Wl,--gc-sections
 ifeq ($(DEBUG),1)
 	CFLAGS += -fno-lto
 else
 	$(shell mkdir -p "$(BUILD_DIR)/lto_incremental")
 	CFLAGS += -flto -fno-fat-lto-objects -fwhole-program -flto-incremental=$(BUILD_DIR)/lto_incremental
 endif
-EXT_CFLAGS := -std=gnu2x $(TARGET_CFLAGS) -G0 -fno-lto
+EXT_CFLAGS := -std=gnu2x $(TARGET_CFLAGS) -G0 -mno-gpopt -fno-lto
 
 CFLAGS_FILE := $(BUILD_DIR)/cflags.txt
 $(shell mkdir -p $(dir $(CFLAGS_FILE)))
@@ -180,7 +196,7 @@ ifneq ($(CFLAGS),$(file <$(CFLAGS_FILE)))
 	$(file >$(CFLAGS_FILE),$(CFLAGS))
 endif
 
-ASFLAGS := -O2 -mabi=eabi -march=r3000 -msoft-float
+ASFLAGS := -O2 -mabi=eabi -march=$(ARCH) -msoft-float
 LDFLAGS := $(CFLAGS) -EL -Wl,-Map,$(BUILD_DIR)/sm64.map -Lps1-bare-metal -T$(BUILD_DIR)/executable.preprocessed.ld
 
 CPP      := $(CC) -E -x c
@@ -191,15 +207,15 @@ CPPFLAGS := -P -Wno-trigraphs $(DEF_INC_CFLAGS)
 #==============================================================================#
 
 # N64 tools
-#MIO0TOOL              := $(TOOLS_DIR)/mio0
-#N64CKSUM              := $(TOOLS_DIR)/n64cksum
-#N64GRAPHICS           := $(TOOLS_DIR)/n64graphics
-#N64GRAPHICS_CI        := $(TOOLS_DIR)/n64graphics_ci
-TEXTCONV              := $(TOOLS_DIR)/textconv
-#AIFF_EXTRACT_CODEBOOK := $(TOOLS_DIR)/aiff_extract_codebook
-#VADPCM_ENC            := $(TOOLS_DIR)/vadpcm_enc
-EXTRACT_DATA_FOR_MIO  := $(TOOLS_DIR)/extract_data_for_mio
-SKYCONV               := $(TOOLS_DIR)/skyconv
+#MIO0TOOL              := $(TOOLS_DIR)/build/mio0
+#N64CKSUM              := $(TOOLS_DIR)/build/n64cksum
+#N64GRAPHICS           := $(TOOLS_DIR)/build/n64graphics
+#N64GRAPHICS_CI        := $(TOOLS_DIR)/build/n64graphics_ci
+TEXTCONV              := $(TOOLS_DIR)/build/textconv
+#AIFF_EXTRACT_CODEBOOK := $(TOOLS_DIR)/build/aiff_extract_codebook
+#VADPCM_ENC            := $(TOOLS_DIR)/build/vadpcm_enc
+EXTRACT_DATA_FOR_MIO  := $(TOOLS_DIR)/build/extract_data_for_mio
+SKYCONV               := $(TOOLS_DIR)/build/skyconv
 PRINT = printf
 
 ifeq ($(COLOR),1)
@@ -221,10 +237,10 @@ endef
 #==============================================================================#
 ISO_OUT := $(BUILD_DIR)/sm64.iso
 CUE_OUT := $(BUILD_DIR)/sm64.cue
-ifeq ($(BENCH),0)
-all: $(ISO_OUT) $(CUE_OUT)
+ifeq ($(BENCH),1)
+	all: $(EXE)
 else
-all: $(EXE)
+	all: $(ISO_OUT) $(CUE_OUT)
 endif
 
 clean:
@@ -265,7 +281,7 @@ else
 	endif
 endif
 
-ALL_DIRS := $(BUILD_DIR) $(addprefix $(BUILD_DIR)/,$(SRC_DIRS) $(GODDARD_SRC_DIRS) $(LIBC_SRC_DIRS) $(BIN_DIRS) textures $(TEXT_DIRS) $(SOUND_SAMPLE_DIRS) $(addprefix levels/,$(c)) rsp include)
+ALL_DIRS := $(BUILD_DIR) $(addprefix $(BUILD_DIR)/,$(SRC_DIRS) $(GODDARD_SRC_DIRS) $(LIBC_SRC_DIRS) $(BIN_DIRS) textures $(TEXT_DIRS) $(SOUND_SAMPLE_DIRS) $(addprefix levels/,$(LEVEL_DIRS)) rsp include)
 
 # Make sure build directory exists before compiling anything
 DUMMY != mkdir -p $(ALL_DIRS)
@@ -280,20 +296,21 @@ $(BUILD_DIR)/src/game/ingame_menu.o: $(BUILD_DIR)/include/text_strings.h
 #==============================================================================#
 
 # Convert PNGs to a specialized format
-$(BUILD_DIR)/%.fulldata: %.png tools/convert_image_psx
+$(BUILD_DIR)/%.fulldata: %.png tools/build/convert_image_psx
 >	$(call print,Converting:,$<,$@)
 >	$(V)mkdir -p $(dir $@)
->	$(V)./tools/convert_image_psx 4 $< $@
+>	$(V)./tools/build/convert_image_psx 4 $< $@
 
 PNGS_WITH_BLACK_TRANSPARENCY := levels/intro/3_tm.rgba16.png
 
-$(PNGS_WITH_BLACK_TRANSPARENCY:%.png=$(BUILD_DIR)/%.fulldata): $(BUILD_DIR)/%.fulldata: %.png tools/convert_image_psx
+$(PNGS_WITH_BLACK_TRANSPARENCY:%.png=$(BUILD_DIR)/%.fulldata): $(BUILD_DIR)/%.fulldata: %.png tools/build/convert_image_psx
 >	$(call print,Converting:,$<,$@)
 >	$(V)mkdir -p $(dir $@)
->	$(V)./tools/convert_image_psx 4 $< $@
+>	$(V)./tools/build/convert_image_psx 4 $< $@
 
-ALL_PNGS := $(foreach png,$(filter-out %/cake.png %/cake_eu.png %/skyboxes/%.png,$(filter %.png,$(file <.assets-local.txt))),$(wildcard $(png))) dualshock_graphic.png
+ALL_PNGS := $(foreach png,$(filter-out %/cake.png %/cake_eu.png textures/skyboxes/%.png,$(filter %.png,$(file <.assets-local.txt))),$(wildcard $(png))) dualshock_graphic.png
 ALL_FULLDATAS := $(ALL_PNGS:%.png=$(BUILD_DIR)/%.fulldata)
+
 
 $(BUILD_DIR)/tex_pack: $(ALL_FULLDATAS) tools/pack_textures.py
 >	@$(PRINT) "$(GREEN)Packing all images$(NO_COL)\n"
@@ -308,9 +325,11 @@ $(BUILD_DIR)/tex_pack: $(ALL_FULLDATAS) tools/pack_textures.py
 >	$(V)mv $@.tmp $@
 
 ALL_TEX_HEADER_FILES := $(ALL_PNGS:%.png=$(BUILD_DIR)/%.inc.c)
-#ifeq ($(BENCH),0)
+ifeq ($(BENCH),1)
+	CAKE_INC_C :=
+else
 	CAKE_INC_C := $(if $(filter eu,$(VERSION)),$(BUILD_DIR)/levels/ending/cake_eu.inc.c,$(BUILD_DIR)/levels/ending/cake.inc.c)
-#endif
+endif
 
 $(ALL_TEX_HEADER_FILES):
 
@@ -328,20 +347,15 @@ endif
 
 $(BUILD_DIR)/bgm/dummy%.track.xa: empty.wav $(PSXAVENC)
 >	$(V)mkdir -p $(dir $@)
->	$(V)$(PSXAVENC) -t xa -f 37800 -b 4 -c 2 -F $(*:track=) -C 0 $< $@
+>	$(V)$(PSXAVENC) -t xa -f 37800 -b 8 -c 2 -F $(*:track=) -C 0 $< $@
 
 $(BUILD_DIR)/bgm/%.track.xa: .local/%.wav $(PSXAVENC)
 >	$(V)mkdir -p $(dir $@)
->	$(V)$(PSXAVENC) -t xa -f 37800 -b 4 -c 2 -F $(*:track=) -C 0 $< $@
+>	$(V)$(PSXAVENC) -t xa -f 37800 -b 8 -c 2 -F $(*:track=) -C 0 $< $@
 
 $(BUILD_DIR)/bgm/pack.xa: $(TOOLS_DIR)/interleave_xa.py $(foreach track,$(BGM_TRACKS),$(BUILD_DIR)/bgm/$(track).track.xa)
 >	$(V)mkdir -p $(dir $@)
 >	$(V)$(PYTHON) $(TOOLS_DIR)/interleave_xa.py $(BUILD_DIR)/bgm/info.dat $(BUILD_DIR)/bgm/pack.xa $(filter-out %.py,$^)
-
-$(BUILD_DIR)/bgm/pack.xa.valid: $(BUILD_DIR)/bgm/pack.xa $(TOOLS_DIR)/validate_xa_psx.py
->	@$(PRINT) "$(GREEN)Validating hardware XA: $(BLUE)$< $(NO_COL)\n"
->	$(V)$(PYTHON) $(TOOLS_DIR)/validate_xa_psx.py $<
->	$(V)touch $@
 
 # Sound files
 SOUND_BANK_FILES    := $(wildcard sound/sound_banks/*.json)
@@ -357,9 +371,9 @@ SOUND_SAMPLE_AIFFS  := $(foreach dir,$(SOUND_SAMPLE_DIRS),$(wildcard $(dir)/*.ai
 #		$(foreach file,$(wildcard $(dir)/*.s),$(BUILD_DIR)/$(file:.s=.m64)) \
 #	)
 
-$(BUILD_DIR)/%.samplebin: %.aiff $(TOOLS_DIR)/psx_sample_gen.c
+$(BUILD_DIR)/%.samplebin: %.aiff $(TOOLS_DIR)/build/psx_sample_gen
 >	$(V)mkdir -p $(dir $@)
->	$(V)$(TOOLS_DIR)/psx_sample_gen $< $@
+>	$(V)$(TOOLS_DIR)/build/psx_sample_gen $< $@
 
 SOUND_SAMPLE_BINS := $(SOUND_SAMPLE_AIFFS:%.aiff=$(BUILD_DIR)/%.samplebin)
 
@@ -368,9 +382,10 @@ $(BUILD_DIR)/soundtable $(BUILD_DIR)/sounddata &: $(SOUND_SAMPLE_BINS) $(SOUND_B
 >	$(V)mv $(BUILD_DIR)/soundtable.tmp $(BUILD_DIR)/soundtable
 >	$(V)mv $(BUILD_DIR)/sounddata.tmp $(BUILD_DIR)/sounddata
 
-$(BUILD_DIR)/sfx_defs.generated.c: sound/sequences/00_sound_player.s $(TOOLS_DIR)/sound_player_to_c.py
->	$(call print,Compiling sound effect definitions:,$<,$@)
->	$(V)$(PYTHON) $(TOOLS_DIR)/sound_player_to_c.py $(VERSION) $< $@
+$(BUILD_DIR)/sfx_defs.generated.c $(SFX_DATA_BIN) &: sound/sequences/00_sound_player.s $(TOOLS_DIR)/sound_player_to_c.py
+>	$(call print,Compiling sound effect definitions:,$<,$(BUILD_DIR)/sfx_defs.generated.c)
+>	$(V)$(PYTHON) $(TOOLS_DIR)/sound_player_to_c.py $(VERSION) $< $(BUILD_DIR)/sfx_defs.generated.c
+
 
 #==============================================================================#
 # Segment Generation                                                           #
@@ -379,42 +394,42 @@ $(BUILD_DIR)/sfx_defs.generated.c: sound/sequences/00_sound_player.s $(TOOLS_DIR
 # Link segment file to resolve external labels
 $(BUILD_DIR)/%.elf: $(BUILD_DIR)/%.o2
 >	$(call print,Linking asset ELF file (at $(SEGMENT_ADDRESS)):,$<,$@)
->	$(V)$(EXT_LD) -e 0 -Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Text_files_elf.ld --unresolved-symbols=ignore-all -Map $@.map -o $@.tmp $<
+>	$(V)$(EXT_LD) $(EXT_CFLAGS) -e 0 -Wl,-Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Wl,-Text_files_elf.ld -Wl,--unresolved-symbols=ignore-all -Wl,-Map -Wl,$@.map -o $@.tmp $<
 >	$(V)$(OBJCOPY) -j .data $@.tmp
 >	$(V)mv $@.tmp $@
 # Override for leveldata.elf, which otherwise matches the above pattern
 .SECONDEXPANSION:
 $(BUILD_DIR)/levels/%/leveldata.elf: $(BUILD_DIR)/levels/%/leveldata.o2 $(BUILD_DIR)/bin/$$(TEXTURE_BIN).elf
 >	$(call print,Linking leveldata ELF file (at $(SEGMENT_ADDRESS)):,$<,$@)
->	$(V)$(EXT_LD) -e 0 -Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Text_files_elf.ld --unresolved-symbols=ignore-all -Map $@.map --just-symbols=$(BUILD_DIR)/bin/$(TEXTURE_BIN).elf -o $@.tmp $<
+>	$(V)$(EXT_LD) $(EXT_CFLAGS) -e 0 -Wl,-Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Wl,-Text_files_elf.ld -Wl,--unresolved-symbols=ignore-all -Wl,-Map -Wl,$@.map -Wl,--just-symbols=$(BUILD_DIR)/bin/$(TEXTURE_BIN).elf -o $@.tmp $<
 >	$(V)$(OBJCOPY) -j .data $@.tmp
 >	$(V)mv $@.tmp $@
 
 .SECONDEXPANSION:
 $(BUILD_DIR)/levels/%/scriptgeo.elf: $(BUILD_DIR)/levels/%/script.o2 $(BUILD_DIR)/levels/%/geo.o2 $(BUILD_DIR)/levels/%/leveldata.elf $(GROUP_SEG_FILES) $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt
 >	$(call print,Linking level script & geo ELF file (at $(SEGMENT_ADDRESS)):,$<,$@)
->	$(V)$(EXT_LD) -e 0 -Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Text_files_elf.ld --unresolved-symbols=ignore-all -Map $@.map $(addprefix --just-symbols=,$(GROUP_SEG_FILES)) --just-symbols=$(@:scriptgeo.elf=leveldata.elf) `sed "s/-Wl,//g" $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt` -o $@.tmp $< $(<:script.o2=geo.o2)
+>	$(V)$(EXT_LD) $(EXT_CFLAGS) -e 0 -Wl,-Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Wl,-Text_files_elf.ld -Wl,--unresolved-symbols=ignore-all -Wl,-Map -Wl,$@.map $(GROUP_SEG_FILES:%=-Wl,--just-symbols=%) -Wl,--just-symbols=$(@:scriptgeo.elf=leveldata.elf) @$(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt -o $@.tmp $< $(<:script.o2=geo.o2)
 >	$(V)$(OBJCOPY) -j .data $@.tmp
 >	$(V)mv $@.tmp $@
 
 .SECONDEXPANSION:
 $(BUILD_DIR)/levels/intro/scriptgeo.elf: $(BUILD_DIR)/levels/intro/script.o2 $(BUILD_DIR)/levels/intro/geo.o2 $(BUILD_DIR)/levels/menu/scriptgeo.elf $(BUILD_DIR)/levels/intro/leveldata.elf $(GROUP_SEG_FILES) $(BUILD_DIR)/ext_files_defsym_plusmenu.txt
 >	$(call print,Linking intro script & geo ELF file (at 0x14000000):,$<,$@)
->	$(V)$(EXT_LD) -e 0 -Tdata=0x14000000 -EL -no-pie -G0 -Text_files_elf.ld -Map $@.map $(addprefix --just-symbols=,$(GROUP_SEG_FILES)) --just-symbols=$(@:scriptgeo.elf=leveldata.elf) --just-symbols=$(BUILD_DIR)/levels/menu/scriptgeo.elf `sed "s/-Wl,//g" $(BUILD_DIR)/ext_files_defsym_plusmenu.txt` -o $@.tmp $< $(<:script.o2=geo.o2)
+>	$(V)$(EXT_LD) $(EXT_CFLAGS) -e 0 -Wl,-Tdata=0x14000000 -EL -no-pie -G0 -Wl,-Text_files_elf.ld -Wl,-Map -Wl,$@.map $(GROUP_SEG_FILES:%=-Wl,--just-symbols=%) -Wl,--just-symbols=$(@:scriptgeo.elf=leveldata.elf) -Wl,--just-symbols=$(BUILD_DIR)/levels/menu/scriptgeo.elf @$(BUILD_DIR)/ext_files_defsym_plusmenu.txt -o $@.tmp $< $(<:script.o2=geo.o2)
 >	$(V)$(OBJCOPY) -j .data $@.tmp
 >	$(V)mv $@.tmp $@
 
 .SECONDEXPANSION:
 $(BUILD_DIR)/levels/menu/scriptgeo.elf: $(BUILD_DIR)/levels/menu/script.o2 $(BUILD_DIR)/levels/menu/geo.o2 $(BUILD_DIR)/levels/menu/leveldata.elf $(GROUP_SEG_FILES) $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt
 >	$(call print,Linking menu script & geo ELF file (at 0x14000000):,$<,$@)
->	$(V)$(EXT_LD) -e 0 -Tdata=0x14000000 -EL -no-pie -G0 -Text_files_elf.ld -Map $@.map $(addprefix --just-symbols=,$(GROUP_SEG_FILES)) --just-symbols=$(@:scriptgeo.elf=leveldata.elf) `sed "s/-Wl,//g" $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt` -o $@.tmp $< $(<:script.o2=geo.o2)
+>	$(V)$(EXT_LD) $(EXT_CFLAGS) -e 0 -Wl,-Tdata=0x14000000 -EL -no-pie -G0 -Wl,-Text_files_elf.ld -Wl,-Map -Wl,$@.map $(GROUP_SEG_FILES:%=-Wl,--just-symbols=%) -Wl,--just-symbols=$(@:scriptgeo.elf=leveldata.elf) @$(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt -o $@.tmp $< $(<:script.o2=geo.o2)
 >	$(V)$(OBJCOPY) -j .data $@.tmp
 >	$(V)mv $@.tmp $@
 
 .SECONDEXPANSION:
 $(BUILD_DIR)/actors/%_geo.elf: $(BUILD_DIR)/actors/%_geo.o2 $(BUILD_DIR)/actors/%.elf
 >	$(call print,Linking actor geo ELF file (at $(SEGMENT_ADDRESS)):,$<,$@)
->	$(V)$(EXT_LD) -e 0 -Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Text_files_elf.ld -Map $@.map --just-symbols=$(filter-out $<,$^) -o $@.tmp $<
+>	$(V)$(EXT_LD) $(EXT_CFLAGS) -e 0 -Wl,-Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Wl,-Text_files_elf.ld -Wl,-Map -Wl,$@.map -Wl,--just-symbols=$(filter-out $<,$^) -o $@.tmp $<
 >	$(V)$(OBJCOPY) -j .data $@.tmp
 >	$(V)mv $@.tmp $@
 
@@ -434,7 +449,7 @@ $(BUILD_DIR)/%.mio0: $(BUILD_DIR)/%.bin
 # convert binary mio0 to object file
 $(BUILD_DIR)/%.mio0.o2: $(BUILD_DIR)/%.mio0
 >	$(call print,Converting MIO0 to ELF:,$<,$@)
->	$(V)$(EXT_LD) -r -b binary $< -o $@
+>	$(V)$(EXT_LD) $(EXT_CFLAGS) -r -b binary $< -o $@
 
 EXT_SYMS_TXT := $(BUILD_DIR)/ext_symbols.txt
 $(BUILD_DIR)/%.asset.txt: $(BUILD_DIR)/%.elf
@@ -461,37 +476,35 @@ $(BUILD_DIR)/ext_files_sections_noscriptgeo.txt: $(BIN_SEG_FILES:%.elf=%.mio0sec
 >	@cat $^ > $@
 $(BUILD_DIR)/ext_files_sections_plusmenu.txt: $(BUILD_DIR)/ext_files_sections_noscriptgeo.txt $(BUILD_DIR)/levels/menu.levelscriptgeosection.txt
 >	@cat $^ > $@
-$(BUILD_DIR)/assets/mario_anim_data.marioanimbin: $(BUILD_DIR)/assets/mario_anim_data.elf $(TOOLS_DIR)/compress_mario_anims
+$(BUILD_DIR)/assets/mario_anim_data.marioanimbin: $(BUILD_DIR)/assets/mario_anim_data.elf $(TOOLS_DIR)/build/compress_mario_anims
 >	@data_offset_and_size=`readelf -S $< | sed -Enz "s?.*\\.data\\s+PROGBITS\\s+[0-9A-Za-z]+\\s+([0-9A-Za-z]+)\\s+([0-9A-Za-z]+).*?0x\1 0x\2?p"` ;\
->	exec $(TOOLS_DIR)/compress_mario_anims $< $@ $$data_offset_and_size
+>	exec $(TOOLS_DIR)/build/compress_mario_anims $< $@ $$data_offset_and_size
 $(BUILD_DIR)/assets/mario_anim_data.marioanimsection.txt: $(BUILD_DIR)/assets/mario_anim_data.marioanimbin
 >	@echo -n "$^:0:`printf "%x" \`du -sb $^ | cut -f 1\``!_$(basename $(basename $(notdir $^)))SegmentRomStart:_$(basename $(basename $(notdir $^)))SegmentRomEnd " > $@
 
 HARDCODED_SEGMENTS := -Wl,--defsym=_goddardSegmentRomStart=0 -Wl,--defsym=_goddardSegmentRomEnd=0 -Wl,--defsym=_goddardSegmentStart=0 -Wl,--defsym=_scriptsSegmentRomStart=0 -Wl,--defsym=_scriptsSegmentRomEnd=0 -Wl,--defsym=_behaviorSegmentRomStart=0 -Wl,--defsym=_behaviorSegmentRomEnd=0
 
-$(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt: $(TOOLS_DIR)/makextfiles $(BUILD_DIR)/ext_files_sections_noscriptgeo.txt
->	$(V)$(TOOLS_DIR)/makextfiles $(BUILD_DIR)/ext_files_sections_noscriptgeo.txt $(BUILD_DIR)/ext_files_noscriptgeo.dat $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt.tmp
+$(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt: $(TOOLS_DIR)/build/makextfiles $(BUILD_DIR)/ext_files_sections_noscriptgeo.txt
+>	$(V)$(TOOLS_DIR)/build/makextfiles $(BUILD_DIR)/ext_files_sections_noscriptgeo.txt $(BUILD_DIR)/ext_files_noscriptgeo.dat $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt.tmp
 >	@rm -f $(BUILD_DIR)/ext_files_noscriptgeo.dat
 >	@echo $(HARDCODED_SEGMENTS) >> $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt.tmp
 >	@mv $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt.tmp $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt
 
-$(BUILD_DIR)/ext_files_defsym_plusmenu.txt: $(TOOLS_DIR)/makextfiles $(BUILD_DIR)/ext_files_sections_plusmenu.txt
->	$(V)$(TOOLS_DIR)/makextfiles $(BUILD_DIR)/ext_files_sections_plusmenu.txt $(BUILD_DIR)/ext_files_plusmenu.dat $(BUILD_DIR)/ext_files_defsym_plusmenu.txt.tmp
+$(BUILD_DIR)/ext_files_defsym_plusmenu.txt: $(TOOLS_DIR)/build/makextfiles $(BUILD_DIR)/ext_files_sections_plusmenu.txt
+>	$(V)$(TOOLS_DIR)/build/makextfiles $(BUILD_DIR)/ext_files_sections_plusmenu.txt $(BUILD_DIR)/ext_files_plusmenu.dat $(BUILD_DIR)/ext_files_defsym_plusmenu.txt.tmp
 >	@rm -f $(BUILD_DIR)/ext_files_plusmenu.dat
 >	@echo $(HARDCODED_SEGMENTS) >> $(BUILD_DIR)/ext_files_defsym_plusmenu.txt.tmp
 >	@mv $(BUILD_DIR)/ext_files_defsym_plusmenu.txt.tmp $(BUILD_DIR)/ext_files_defsym_plusmenu.txt
 
-ifneq ($(BENCH),0)
-$(BUILD_DIR)/ext_files_sections_tmp.txt: $(BUILD_DIR)/ext_files_sections_noscriptgeo.txt $(BUILD_DIR)/levels/bob.levelscriptgeosection.txt $(BUILD_DIR)/assets/mario_anim_data.marioanimsection.txt
->	@cat $^ > $@
-else
 $(BUILD_DIR)/ext_files_sections_tmp.txt: $(BUILD_DIR)/ext_files_sections_plusmenu.txt $(BUILD_DIR)/levels/intro.levelscriptgeosection.txt $(LEVEL_SEG_FILES:%/leveldata.elf=%.levelscriptgeosection.txt) $(BUILD_DIR)/assets/demo_data.section.txt $(BUILD_DIR)/assets/mario_anim_data.marioanimsection.txt
 >	@cat $^ > $@
-endif
 
-$(BUILD_DIR)/ext_files_sections_noaudio.txt: $(BUILD_DIR)/ext_files_sections_tmp.txt $(BUILD_DIR)/tex_pack
+
+
+$(BUILD_DIR)/ext_files_sections_noaudio.txt: $(BUILD_DIR)/ext_files_sections_tmp.txt $(BUILD_DIR)/tex_pack $(SFX_DATA_BIN)
 >	@cp $< $@.tmp
 >	@echo " $(BUILD_DIR)/tex_pack:0:$$(printf "%x" $$(wc -c <"$(BUILD_DIR)/tex_pack"))!_texture_data_segment:_texture_data_segment_end " >> $@.tmp
+>	@echo " $(SFX_DATA_BIN):0:$$(printf "%x" $$(wc -c <"$(SFX_DATA_BIN)"))!_sfx_data_segment:_sfx_data_segment_end " >> $@.tmp
 >	@mv $@.tmp $@
 
 $(BUILD_DIR)/ext_files_sections.txt: $(BUILD_DIR)/ext_files_sections_noaudio.txt $(BUILD_DIR)/soundtable $(BUILD_DIR)/sounddata
@@ -500,32 +513,25 @@ $(BUILD_DIR)/ext_files_sections.txt: $(BUILD_DIR)/ext_files_sections_noaudio.txt
 >	@echo " $(BUILD_DIR)/sounddata:0:$$(printf "%x" $$(wc -c <"$(BUILD_DIR)/sounddata"))!_audio_sample_segment:_audio_sample_segment_end " >> $@.tmp
 >	@mv $@.tmp $@
 
-ifneq ($(BENCH),0)
+ifeq ($(BENCH),1)
 	EXT_FILES_SECTIONS_TXT := $(BUILD_DIR)/ext_files_sections_noaudio.txt
 else
 	EXT_FILES_SECTIONS_TXT := $(BUILD_DIR)/ext_files_sections.txt
 endif
 
-# Repack EXT.DAT for CD locality: keep each level's leveldata/scriptgeo together.
-EXT_FILES_ORDERED_TXT := $(BUILD_DIR)/ext_files_sections_ordered.txt
-$(EXT_FILES_ORDERED_TXT): $(EXT_FILES_SECTIONS_TXT) $(TOOLS_DIR)/reorder_ext_files_psx.py
->	@$(PRINT) "$(GREEN)Optimizing EXT.DAT CD locality$(NO_COL)\n"
->	$(V)$(PYTHON) $(TOOLS_DIR)/reorder_ext_files_psx.py $< $@
-
-# Split ext_files.dat generation into a recursive make to avoid
-# choking the main dependency graph.
+# Split the ext_files.dat build into one recursive pass.
+# Do NOT poll with `make -q` in a while loop: grouped targets plus generated
+# EXT.DAT inputs can remain "out of date" for one pass and make that loop spin
+# forever. One recursive build is sufficient and still avoids expanding this
+# choke point in the outer dependency graph.
 ifeq ($(MAKE_EXT_FILES),1)
-
-$(BUILD_DIR)/ext_files_defsym.txt $(BUILD_DIR)/ext_files.dat &: $(TOOLS_DIR)/makextfiles $(EXT_FILES_ORDERED_TXT)
->	$(V)$(TOOLS_DIR)/makextfiles $(EXT_FILES_ORDERED_TXT) $(BUILD_DIR)/ext_files.dat $(BUILD_DIR)/ext_files_defsym.txt.tmp
+$(BUILD_DIR)/ext_files_defsym.txt $(BUILD_DIR)/ext_files.dat &: $(TOOLS_DIR)/build/makextfiles $(EXT_FILES_SECTIONS_TXT)
+>	$(V)$(TOOLS_DIR)/build/makextfiles $(EXT_FILES_SECTIONS_TXT) $(BUILD_DIR)/ext_files.dat $(BUILD_DIR)/ext_files_defsym.txt.tmp
 >	@echo $(HARDCODED_SEGMENTS) >> $(BUILD_DIR)/ext_files_defsym.txt.tmp
 >	@mv $(BUILD_DIR)/ext_files_defsym.txt.tmp $(BUILD_DIR)/ext_files_defsym.txt
-
 else
-
 $(BUILD_DIR)/ext_files_defsym.txt $(BUILD_DIR)/ext_files.dat &:
 >	$(MAKE) $(BUILD_DIR)/ext_files.dat MAKE_EXT_FILES=1
-
 endif
 
 #==============================================================================#
@@ -594,7 +600,7 @@ $(GLOBAL_ASM_DEP).$(NON_MATCHING):
 #==============================================================================#
 
 # Compile C/C++ code
-$(BUILD_DIR)/%.o: %.cpp $(CFLAGS_FILE)
+$(BUILD_DIR)/%.o: %.cpp $(CFLAGS_FILE) $(BUILD_DIR)/ext_files.dat
 >	$(call print,Compiling:,$<,$@)
 >	@$(CXX) -fsyntax-only $(CFLAGS) -MMD -MP -MT $@ -MF $(BUILD_DIR)/$*.d $<
 >	$(V)$(CXX) -c $(CFLAGS) -o $@ $<
@@ -625,31 +631,24 @@ ifeq ($(BENCH),1)
 	LDFLAGS += -Wl,--unresolved-symbols=ignore-all
 endif
 
-$(ELF): $(SEG_FILES_WITH_GEO) $(O_FILES) $(GODDARD_O_FILES) $(LIBC_O_FILES) $(BUILD_DIR)/ext_files_defsym.txt $(BUILD_DIR)/executable.preprocessed.ld
->	@$(PRINT) "$(GREEN)Linking elf: $(BLUE)$@ $(NO_COL)\n"
+$(ELF): $(SEG_FILES_WITH_GEO) $(O_FILES) $(GODDARD_O_FILES) $(LIBC_O_FILES) $(BUILD_DIR)/ext_files_defsym.txt $(BUILD_DIR)/ext_files.dat $(BUILD_DIR)/executable.preprocessed.ld
+>	@$(PRINT) "$(GREEN)Linking elf: $(BLUE)$@$(NO_COL)\n"
 >	$(V)$(LD) $(CFLAGS) -L $(BUILD_DIR) -no-pie -o $@.tmp $(addprefix -Wl$(COMMA)--just-symbols=,$(SEG_FILES_WITH_GEO)) `cat $(BUILD_DIR)/ext_files_defsym.txt` $(O_FILES) $(GODDARD_O_FILES) $(LIBC_O_FILES) $(LDFLAGS)
 >	$(V)$(OBJCOPY) -R.scratchpad -R.bss -R.sbss $@.tmp
 >	@mv $@.tmp $@
->
->	@dl_size=`$(OBJDUMP) -h $@ | awk '$$2==".dl_exec" {print $$3}'`; \
->	if [ -n "$$dl_size" ]; then \
->		dl_dec=$$((16#$$dl_size)); \
->		printf "PSX .dl_exec I-cache section: 0x%s (%d bytes)\n" "$$dl_size" "$$dl_dec"; \
->		if [ $$dl_dec -gt 4096 ]; then \
->			echo "ERROR: .dl_exec exceeds the PS1 4 KiB I-cache budget"; \
->			exit 1; \
->		fi; \
->	fi
 
 $(EXE): $(ELF)
 >	@$(PRINT) "$(GREEN)Converting to executable: $(BLUE)$@ $(NO_COL)\n"
 >	$(V)$(PYTHON) ps1-bare-metal/convertExecutable.py $< $@
 
+tags: $(C_FILES)
+>	@ctags $^
+
 $(BUILD_DIR)/psx_iso.xml: psx_iso.xml
 >	$(V)cp $< $@
 
-$(ISO_OUT) $(CUE_OUT) &: $(EXE) $(BUILD_DIR)/bgm/pack.xa.valid $(BUILD_DIR)/psx_iso.xml system.cnf
->	@$(PRINT) "$(GREEN)Making iso file: $(BLUE)$@ $(NO_COL)\n"
+$(ISO_OUT) $(CUE_OUT) &: $(EXE) $(BUILD_DIR)/bgm/pack.xa $(BUILD_DIR)/psx_iso.xml system.cnf
+>	@$(PRINT) "$(GREEN)Making iso file: $(BLUE)$@$(NO_COL)\n"
 >	$(V)cd $(BUILD_DIR) && ../../$(MKPSXISO) -y ./psx_iso.xml
 
 NOPS ?= nops

@@ -51,7 +51,7 @@ extern OSMesg gPIMesgBuf[32];
 extern OSMesg gSIEventMesgBuf[1];
 extern OSMesg gIntrMesgBuf[16];
 extern OSMesg gUnknownMesgBuf[16];
-extern OSIoMesg gDmaIoMesg;
+//extern OSIoMesg gDmaIoMesg;
 extern OSMesg gMainReceivedMesg;
 extern OSMesgQueue gDmaMesgQueue;
 extern OSMesgQueue gSIEventMesgQueue;

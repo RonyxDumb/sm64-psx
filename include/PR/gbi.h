@@ -4808,26 +4808,6 @@ typedef union {
 
 #endif /* _LANGUAGE_C */
 
-/*
- * --------------------------------------------------------------------------
- * PS1 PORT FAST PATH
- * --------------------------------------------------------------------------
- *
- * The PlayStation renderer does not execute an N64 RSP/RDP pipeline.  Keep
- * the original GBI API visible to the SM64 source tree, but remove commands
- * that have no useful PS1-side effect and pack geometry commands that the PS1
- * backend can consume directly.
- *
- * Dynamic (g*) macros which are irrelevant become true zero-cost operations:
- * they emit no Gfx packet at all. Static (gs*) macros must remain valid inside
- * C initializers, so they emit a single SP no-op packet.
- *
- * IMPORTANT:
- * Do not blindly no-op render/combine/texture-image commands here. The PS1
- * renderer still needs those commands as state/data carriers even though the
- * original N64 hardware semantics are not used.
- */
-
 #undef gSPPerspNormalize
 #undef gsSPPerspNormalize
 #undef gDPFullSync
@@ -4869,124 +4849,62 @@ typedef union {
 #undef gDPSetAlphaDither
 #undef gsDPSetAlphaDither
 #undef CALC_DXT
-
-/* Dynamic commands: do not emit packets for N64-only state/synchronization. */
 #define gSPPerspNormalize(...)
+#define gsSPPerspNormalize(...) gsSPNoOp()
 #define gDPFullSync(...)
+#define gsDPFullSync(...) gsDPNoOp()
 #define gDPTileSync(...)
+#define gsDPTileSync(...) gsDPNoOp()
 #define gDPPipeSync(...)
+#define gsDPPipeSync(...) gsDPNoOp()
 #define gDPLoadSync(...)
+#define gsDPLoadSync(...) gsDPNoOp()
 #define gDPLoadMultiTile_4b(...)
+#define gsDPLoadMultiTile_4b(...) gsDPNoOp()
 #define gDPSetScissor(...)
+#define gsDPSetScissor(...) gsDPNoOp()
 #define gDPLoadTLUT(...)
+#define gsDPLoadTLUT(...) gsDPNoOp()
 #define gDPSetConvert(...)
+#define gsDPSetConvert(...) gsDPNoOp()
 #define gDPSetTileSize(...)
+#define gsDPSetTileSize(...) gsDPNoOp()
 #define gDPPipelineMode(...)
-#define gDPSetTexturePersp(...)
-#define gDPSetTextureDetail(...)
-#define gDPSetTextureLOD(...)
-#define gDPSetTextureLUT(...)
-#define gDPSetTextureFilter(...)
-#define gDPSetTextureConvert(...)
-#define gDPSetCombineKey(...)
-#define gDPSetColorDither(...)
-#define gDPSetAlphaDither(...)
-
-/*
- * Static display-list commands cannot expand to nothing because they are used
- * as initializer elements. Collapse each unsupported state command to one
- * harmless no-op entry.
- */
-#define gsSPPerspNormalize(...)         gsSPNoOp()
-#define gsDPFullSync(...)               gsDPNoOp()
-#define gsDPTileSync(...)               gsDPNoOp()
-#define gsDPPipeSync(...)               gsDPNoOp()
-#define gsDPLoadSync(...)               gsDPNoOp()
-#define gsDPLoadMultiTile_4b(...)       gsDPNoOp()
-#define gsDPSetScissor(...)             gsDPNoOp()
-#define gsDPLoadTLUT(...)               gsDPNoOp()
-#define gsDPSetConvert(...)             gsDPNoOp()
-#define gsDPSetTileSize(...)            gsDPNoOp()
-#define gsDPPipelineMode(...)           gsDPNoOp()
-#define gsDPSetTexturePersp(...)        gsDPNoOp()
-#define gsDPSetTextureDetail(...)       gsDPNoOp()
-#define gsDPSetTextureLOD(...)          gsDPNoOp()
-#define gsDPSetTextureLUT(...)          gsDPNoOp()
-#define gsDPSetTextureFilter(...)       gsDPNoOp()
-#define gsDPSetTextureConvert(...)      gsDPNoOp()
-#define gsDPSetCombineKey(...)          gsDPNoOp()
-#define gsDPSetColorDither(...)         gsDPNoOp()
-#define gsDPSetAlphaDither(...)         gsDPNoOp()
-
-/* PS1 backend does not use the N64 TMEM DXT calculation. */
-#define CALC_DXT(width, ...) (width)
-
-/*
- * Compact PS1 quadrangle packet.
- * Four 8-bit vertex indices fit in one word. This is intentionally exposed as
- * a port-specific primitive instead of replacing gSP1Quadrangle globally,
- * because the latter's 'flag' semantics can differ between microcodes.
- */
-#define gSPPortQuadrangle(pkt, v0, v1, v2, v3)                             \
-{                                                                           \
-    Gfx *_psx_g = (Gfx *)(pkt);                                             \
-    _psx_g->words.w0 = _SHIFTL(G_PORT_QUAD, 24, 8);                         \
-    _psx_g->words.w1 = (_SHIFTL((v0), 24, 8) | _SHIFTL((v1), 16, 8) |      \
-                        _SHIFTL((v2),  8, 8) | _SHIFTL((v3),  0, 8));       \
-}
+#define	gsDPPipelineMode(...) gsDPNoOp()
+#define	gDPSetTexturePersp(...)
+#define	gsDPSetTexturePersp(...) gsDPNoOp()
+#define	gDPSetTextureDetail(...)
+#define	gsDPSetTextureDetail(...) gsDPNoOp()
+#define	gDPSetTextureLOD(...)
+#define	gsDPSetTextureLOD(...) gsDPNoOp()
+#define	gDPSetTextureLUT(...)
+#define	gsDPSetTextureLUT(...) gsDPNoOp()
+#define	gDPSetTextureFilter(...)
+#define	gsDPSetTextureFilter(...) gsDPNoOp()
+#define	gDPSetTextureConvert(...)
+#define	gsDPSetTextureConvert(...) gsDPNoOp()
+#define	gDPSetCombineKey(...)
+#define	gsDPSetCombineKey(...) gsDPNoOp()
+#define	gDPSetColorDither(...)
+#define	gsDPSetColorDither(...) gsDPNoOp()
+#define	gDPSetAlphaDither(...)
+#define	gsDPSetAlphaDither(...) gsDPNoOp()
+#define CALC_DXT(x, ...) x
 
 #define gsSPPortQuadrangle(v0, v1, v2, v3)                                 \
-{{                                                                          \
-    _SHIFTL(G_PORT_QUAD, 24, 8),                                            \
-    (_SHIFTL((v0), 24, 8) | _SHIFTL((v1), 16, 8) |                         \
-     _SHIFTL((v2),  8, 8) | _SHIFTL((v3),  0, 8))                          \
+{{                                                                         \
+        (_SHIFTL(G_PORT_QUAD, 24, 8)),                                     \
+        v0 << 24 | v1 << 16 | v2 << 8 | v3                                 \
 }}
 
-/*
- * Pack two triangles into one 64-bit Gfx command.
- * Flags are intentionally ignored by the PS1 fast-path packet, matching the
- * existing port command format.
- */
-#undef gSP2Triangles
 #undef gsSP2Triangles
-
-#define gSP2Triangles(pkt, t0i0, t0i1, t0i2, flags0,                       \
-                           t1i0, t1i1, t1i2, flags1)                        \
-{                                                                           \
-    Gfx *_psx_g = (Gfx *)(pkt);                                             \
-    (void)(flags0);                                                         \
-    (void)(flags1);                                                         \
-    _psx_g->words.w0 = (_SHIFTL(G_PORT_TRI2, 24, 8) |                       \
-                        _SHIFTL((t0i0), 16, 8) |                             \
-                        _SHIFTL((t0i1),  8, 8) |                             \
-                        _SHIFTL((t0i2),  0, 8));                             \
-    _psx_g->words.w1 = (_SHIFTL((t1i0), 24, 8) |                            \
-                        _SHIFTL((t1i1), 16, 8) |                             \
-                        _SHIFTL((t1i2),  8, 8));                             \
-}
-
-#define gsSP2Triangles(t0i0, t0i1, t0i2, flags0,                           \
-                       t1i0, t1i1, t1i2, flags1)                            \
-{{                                                                          \
-    (_SHIFTL(G_PORT_TRI2, 24, 8) |                                          \
-     _SHIFTL((t0i0), 16, 8) | _SHIFTL((t0i1), 8, 8) |                      \
-     _SHIFTL((t0i2), 0, 8)),                                                \
-    (_SHIFTL((t1i0), 24, 8) | _SHIFTL((t1i1), 16, 8) |                     \
-     _SHIFTL((t1i2), 8, 8))                                                 \
+#define gsSP2Triangles(t0i0, t0i1, t0i2, flags0, t1i0, t1i1, t1i2, flags1) \
+{{                                                                         \
+        (_SHIFTL(G_PORT_TRI2, 24, 8)) | t0i0 << 16 | t0i1 << 8 | t0i2,     \
+        t1i0 << 24 | t1i1 << 16 | t1i2 << 8                                \
 }}
 
-/*
- * PS1 path uses one flat RGBA colour carrier. Preserve the standard libultra
- * PrimColor argument order; the previous port macro treated m/l as RGB, which
- * produced incorrect colours for ordinary six-argument calls.
- */
-#undef gDPSetPrimColor
 #undef gsDPSetPrimColor
-
-#define gDPSetPrimColor(pkt, m, l, r, g, b, a)                              \
-    gDPSetEnvColor((pkt), (r), (g), (b), (a))
-
-#define gsDPSetPrimColor(m, l, r, g, b, a)                                  \
-    gsDPSetEnvColor((r), (g), (b), (a))
+#define gsDPSetPrimColor(r, g, b, ...) gsDPSetEnvColor(r, g, b, 255)
 
 #endif /* _GBI_H_ */

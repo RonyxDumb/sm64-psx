@@ -12,7 +12,7 @@ SDL_Window* window;
 SDL_Renderer* renderer;
 
 void gfx_backend_init() {
-	window = SDL_CreateWindow("sm64", 960, 720, SDL_WINDOW_HIGH_PIXEL_DENSITY);
+	window = SDL_CreateWindow("name", 960, 720, SDL_WINDOW_HIGH_PIXEL_DENSITY);
 	renderer = SDL_CreateRenderer(window, NULL);
 	SDL_ShowWindow(window);
 	SDL_SetRenderLogicalPresentation(renderer, 320, 240, SDL_LOGICAL_PRESENTATION_LETTERBOX);
@@ -46,13 +46,21 @@ void gfx_load_texture(void* tex_ptr) {
 	u8 buf[size];
 	u8* start = _texture_data_segment + tex_header->pixel_data_sector * SECTOR_SIZE;
 	dma_read(buf, start, start + size);
-	SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STATIC, tex_header->width, tex_header->height);
+	u32 w, h;
+	if(tex_header->rotated) {
+		w = tex_header->height;
+		h = tex_header->width;
+	} else {
+		w = tex_header->width;
+		h = tex_header->height;
+	}
+	SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_STATIC, w, h);
 	SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
 	SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-	u32 rgba[tex_header->width * tex_header->height];
+	u32 rgba[w * h];
 	u32 i = 0;
-	for(u32 y = 0; y < tex_header->height; y++) {
-		for(u32 x = 0; x < tex_header->width; x += 2) {
+	for(u32 y = 0; y < h; y++) {
+		for(u32 x = 0; x < w; x += 2) {
 			u8 two_indices = buf[32 + i / 2];
 			u16 psx_pix_lo = buf[(two_indices & 0xF) * 2] | (u32) buf[(two_indices & 0xF) * 2 + 1] << 8;
 			u16 psx_pix_hi = buf[(two_indices >> 4) * 2] | (u32) buf[(two_indices >> 4) * 2 + 1] << 8;
@@ -61,7 +69,15 @@ void gfx_load_texture(void* tex_ptr) {
 			i += 2;
 		}
 	}
-	SDL_UpdateTexture(texture, NULL, rgba, tex_header->width * 4);
+	// if(tex_header->rotated) {
+	// 	int i = 0;
+	// 	for(u32 x = 0; x < w; x++) {
+	// 		for(u32 y = 0; y < h; y++) {
+	// 			rgba[i++] = rgba[y * w + x];
+	// 		}
+	// 	}
+	// }
+	SDL_UpdateTexture(texture, NULL, rgba, w * 4);
 	tex_header->sdl_tex_ptr = (uintptr_t) texture;
 }
 

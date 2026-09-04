@@ -6,6 +6,9 @@
 #include <assert.h>
 #include <engine/math_util.h>
 
+// void gfx_begin_queueing_for_tessellation(const GfxVtx* v0, const GfxVtx* v1, const GfxVtx* v2, const GfxVtx* v3, u8 flags) {}
+// void gfx_finish_queueing_for_tessellation(u32 rgb0, u32 rgb1, u32 rgb2, u32 rgb3) {}
+
 u32 debug_processed_poly_count = 0;
 void* tex_ptr = NULL;
 static Color env_color;
@@ -32,8 +35,8 @@ void gfx_reset_dl_exec() {
 	env_alpha = 255;
 	gfx_modelview_identity();
 	ambient_color.as_u32 = 0;
-	light_directions[0] = (ShortVec) {.vx_vy = 0, .vz_pad = 0};
-	light_directions[1] = (ShortVec) {.vx_vy = 0, .vz_pad = 0};
+	light_directions[0] = (ShortVec) {.xy = 0, .zw = 0};
+	light_directions[1] = (ShortVec) {.xy = 0, .zw = 0};
 	light_colors[0].as_u32 = 0;
 	light_colors[1].as_u32 = 0;
 }
@@ -70,11 +73,11 @@ static int clamp(int x, int a, int b) {
 
 static Color apply_directional_light(u8 i, s8* n) {
 	s32 intensity = 0;
-	s32 x = (s32) n[0] * light_directions[i].vx / 128;
+	s32 x = (s32) n[0] * light_directions[i].x / 128;
 	if(x > 0) intensity += x;
-	s32 y = (s32) n[1] * light_directions[i].vy / 128;
+	s32 y = (s32) n[1] * light_directions[i].y / 128;
 	if(y > 0) intensity += y;
-	s32 z = (s32) n[2] * light_directions[i].vz / 128;
+	s32 z = (s32) n[2] * light_directions[i].z / 128;
 	if(z > 0) intensity += z;
 	if(intensity <= 0) {
 		return (Color) {.as_u32 = 0};
@@ -100,15 +103,15 @@ static SDL_FColor light_from_normal(s8* normal) {
 static SDL_Vertex transform_vertex(const GfxVtx* v, s32* min_z, s32* max_z, u32 flags) {
 	ShortVec p = gfx_modelview_apply((ShortVec*) &v->x);
 	//p.vz = -p.vz;
-	if(p.vz < *min_z) {
-		*min_z = p.vz;
+	if(p.z < *min_z) {
+		*min_z = p.z;
 	}
-	if(p.vz > *max_z) {
-		*max_z = p.vz;
+	if(p.z > *max_z) {
+		*max_z = p.z;
 	}
 	return (SDL_Vertex) {
-		.position.x = is_ortho? p.vx: (float) p.vx * multiplier / p.vz + XRES / 2,
-		.position.y = is_ortho? p.vy: (float) p.vy * multiplier / p.vz + YRES / 2,
+		.position.x = is_ortho? p.x: (float) p.x * multiplier / p.z + XRES / 2,
+		.position.y = is_ortho? p.y: (float) p.y * multiplier / p.z + YRES / 2,
 		.tex_coord.x = tex_ptr? (float) v->u / (float) ((TexHeader*) tex_ptr)->width: 0.f,
 		.tex_coord.y = tex_ptr? (float) v->v / (float) ((TexHeader*) tex_ptr)->height: 0.f,
 		.color =
@@ -235,12 +238,13 @@ void gfx_run_compiled_dl(dl_t* dl) {
 		dl_t cmd = *(dl++);
 		u8 op = DL_UNPACK_OP(cmd);
 		switch(op) {
-			case DL_CMD_CALL: case DL_CMD_JUMP: {
-				dl_t* target = DL_UNPACK_PTR(cmd);
-				if(op == DL_CMD_CALL) {
-					call_stack[call_stack_idx++] = dl;
-				}
-				dl = target;
+			case DL_CMD_JUMP: {
+				dl = DL_UNPACK_PTR(cmd);
+				break;
+			}
+			case DL_CMD_CALL: {
+				call_stack[call_stack_idx++] = dl;
+				dl = DL_UNPACK_PTR(cmd);
 				break;
 			}
 			case DL_CMD_END: {
@@ -294,17 +298,17 @@ void gfx_run_compiled_dl(dl_t* dl) {
 			case DL_CMD_LIGHT_DIRECTIONAL0: case DL_CMD_LIGHT_DIRECTIONAL1: {
 				Light_t* n64light = DL_UNPACK_PTR(cmd);
 				ShortVec n = {
-					.vx = (s16) n64light->dir[0],
-					.vy = (s16) n64light->dir[1],
-					.vz = (s16) n64light->dir[2]
+					.x = (s16) n64light->dir[0],
+					.y = (s16) n64light->dir[1],
+					.z = (s16) n64light->dir[2]
 				};
 				n = gfx_modelview_apply_without_translation(&n);
-				s32 n_len_sq = (s32) n.vx * n.vx + (s32) n.vy * n.vy + (s32) n.vz * n.vz;
+				s32 n_len_sq = (s32) n.x * n.x + (s32) n.y * n.y + (s32) n.z * n.z;
 				if(n_len_sq > 0) {
 					s32 n_len = sqrtu(n_len_sq);
-					n.vx = (s32) n.vx * ONE / n_len;
-					n.vy = (s32) n.vy * ONE / n_len;
-					n.vz = (s32) n.vz * ONE / n_len;
+					n.x = (s32) n.x * ONE / n_len;
+					n.y = (s32) n.y * ONE / n_len;
+					n.z = (s32) n.z * ONE / n_len;
 				}
 				u32 light_index = op == DL_CMD_LIGHT_DIRECTIONAL1? 1: 0;
 				light_directions[light_index] = n;
@@ -312,6 +316,7 @@ void gfx_run_compiled_dl(dl_t* dl) {
 				break;
 			}
 			case DL_CMD_MTX_SET: case DL_CMD_MTX_MUL: {
+				// gfx_flush_tessellation_queue_if_necessary();
 				const ShortMatrix* addr = DL_UNPACK_PTR(cmd);
 				if(op == DL_CMD_MTX_MUL) {
 					gfx_modelview_mul(addr);
@@ -325,10 +330,12 @@ void gfx_run_compiled_dl(dl_t* dl) {
 				break;
 			}
 			case DL_CMD_MTX_POP: {
+				// gfx_flush_tessellation_queue_if_necessary();
 				gfx_modelview_pop();
 				break;
 			}
 			case DL_CMD_MTX_N64_SET: case DL_CMD_MTX_N64_MUL: {
+				// gfx_flush_tessellation_queue_if_necessary();
 				const u32* addr = DL_UNPACK_PTR(cmd);
 				ShortMatrix arg_mtx;
 				for(int i = 0; i < 4; i++) {

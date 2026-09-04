@@ -19,14 +19,13 @@ typedef struct {
 	u16 pixel_data_sector_count;
 } TexHeader;
 
-STATIC_ASSERT(sizeof(TexHeader) == 20, "TexHeader must match the layout output by convertImage.py and pack_textures.py");
+STATIC_ASSERT(sizeof(TexHeader) == 20, "TexHeader must match the layout output by convert_image_psx.c and pack_textures.py");
 
 #define Z_BUCKETS 2000 // for performance, should be equal to MAX_Z divided by a power of two
 #define FOREGROUND_BUCKETS 32
 #define BACKGROUND_Z (Z_BUCKETS + FOREGROUND_BUCKETS)
 #define OT_LEN 2048
 #define PACKET_POOL_LEN 16384
-#define TESSELLATION_QUEUE_SIZE_BYTES 12288
 
 typedef struct {
 	u32 ot[OT_LEN];
@@ -45,7 +44,15 @@ typedef struct {
 } Packet;
 
 Packet gfx_packet_begin();
-void gfx_packet_append(Packet* packet, u32 cmd);
+
+ALWAYS_INLINE u32* gfx_packet_skip(Packet* packet) {
+	return packet->end++;
+}
+
+ALWAYS_INLINE void gfx_packet_append(Packet* packet, u32 cmd) {
+	*(packet->end++) = cmd;
+}
+
 void gfx_packet_end(Packet packet, u32 ot_z);
 
 typedef ALIGNED4 struct {
@@ -92,17 +99,10 @@ void ensure_vertices_converted(VtxList* vtx_list, u32 count);
 void gfx_begin_queueing_for_tessellation(const GfxVtx* v0, const GfxVtx* v1, const GfxVtx* v2, const GfxVtx* v3, u8 flags);
 void gfx_finish_queueing_for_tessellation(u32 rgb0, u32 rgb1, u32 rgb2, u32 rgb3);
 
-#define FATAL_GTE_ERRORS (\
+#define IMPORTANT_GTE_ERRORS (\
+	GTE_FLAG_DIVIDE_OVERFLOW |\
 	GTE_FLAG_MAC0_UNDERFLOW |\
 	GTE_FLAG_MAC0_OVERFLOW |\
 	GTE_FLAG_IR2_SATURATED |\
-	GTE_FLAG_IR1_SATURATED |\
-	GTE_FLAG_MAC3_UNDERFLOW |\
-	GTE_FLAG_MAC2_UNDERFLOW |\
-	GTE_FLAG_MAC1_UNDERFLOW |\
-	GTE_FLAG_MAC3_OVERFLOW |\
-	GTE_FLAG_MAC2_OVERFLOW |\
-	GTE_FLAG_MAC1_OVERFLOW\
+	GTE_FLAG_IR1_SATURATED\
 )
-
-#define IMPORTANT_GTE_ERRORS 0xFFFFFFFF

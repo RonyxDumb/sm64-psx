@@ -129,9 +129,10 @@ int memcmp(const void *lhs, const void *rhs, size_t count) {
 
 	for (; count; count--) {
 		uint8_t a = *(_lhs++), b = *(_rhs++);
+		int diff = a - b;
 
-		if (a != b)
-			return a - b;
+		if (diff)
+			return diff;
 	}
 
 	return 0;

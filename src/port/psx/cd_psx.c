@@ -13,119 +13,64 @@
 
 #define assert_eq(x, y, fmt) ({typeof(x) a = (x); typeof(y) b = (y); if(a != b) {printf("assert_eq failed: lhs = " fmt ", rhs = " fmt "\n", a, b); _assertAbort(__FILE__, __LINE__, #x " == " #y);} a;})
 
-static bool dma_inited = false;
+static bool cd_inited = false;
 static u32 dat_lba;
 
-/*
- * Keep track of the CD decoder mode so repeated EXT.DAT reads do not issue a
- * redundant SETMODE command every time.  The public API remains synchronous,
- * so this does not change loader semantics.
- */
-enum PsxCdMode {
-	PSX_CD_MODE_UNKNOWN,
-	PSX_CD_MODE_DATA,
-	PSX_CD_MODE_XA,
-};
-static enum PsxCdMode sPsxCdMode = PSX_CD_MODE_UNKNOWN;
-
-
 #define SECTOR_SIZE 2048
-/*
- * The synchronous public cd_read() API is kept for compatibility with the
- * current SM64 loader.  These counters are intentionally global so they can be
- * inspected from PCSX-Redux/GDB when profiling level loads.
- */
-volatile u32 gPsxCdReadCalls = 0;
-volatile u32 gPsxCdBytesRead = 0;
-volatile u32 gPsxCdSectorsRead = 0;
-volatile u32 gPsxCdSetLocCount = 0;
-volatile u32 gPsxCdModeSwitchCount = 0;
-
-
-/*
- * CD mode is shared hardware state. Every subsystem that changes it MUST go
- * through this function; otherwise the software cache can become stale.
- */
-void psx_cd_set_mode(u8 mode) {
-	enum PsxCdMode logical_mode = PSX_CD_MODE_UNKNOWN;
-
-	if(mode == MODE_2X_SPEED) {
-		logical_mode = PSX_CD_MODE_DATA;
-	} else if(mode == (MODE_XA_ADPCM | MODE_XA_SECTOR_FILTER | MODE_2X_SPEED)) {
-		logical_mode = PSX_CD_MODE_XA;
-	}
-
-	if(logical_mode == PSX_CD_MODE_UNKNOWN || sPsxCdMode != logical_mode) {
-		psx_cd_run_cmd(CDROM_SETMODE, &mode, 1);
-		gPsxCdModeSwitchCount++;
-		sPsxCdMode = logical_mode;
-	}
-}
-
-
-
-/*
- * Hardware failsafe only.  Normal reads never reach this limit; its purpose is
- * to turn a bad CD state into an actionable crash instead of an infinite
- * "loading" screen.
- */
-#define PSX_CD_SPIN_LIMIT 0x02000000u
-
 extern u32 gGlobalTimer;
 
-void psx_cd_await_interrupt(u8 expected) {
+void psx_cd_await_interrupt(u8 expected, u8* result, int result_size) {
 	CDROM_ADDRESS = 1; // interrupt flags are only accessible at index 1
-	u32 timeout = PSX_CD_SPIN_LIMIT;
-	while(true) { // acknowledge whichever interrupts we get, but only stop on the expected one
-		if(--timeout == 0) {
-			abortf("CD timeout waiting for INT%u\n", expected);
-		}
-		__asm__ volatile inline("");
+	while(true) {
+		asm volatile inline("");
 		u8 got = CDROM_HINTSTS & 7;
 		if(got) { // supposedly the read is a bit unstable, so read twice just in case
 			got = CDROM_HINTSTS & 7;
+
+			// acknowledge whichever interrupts we get, but only stop on the expected one
 			if(got == expected) {
-				if(got == 1) { // special handling for INT1 ("data ready")
-					// for some reason we still gotta request the data and wait for it to be ready
+				for(int i = 0; i < result_size; i++) {
+					result[i] = CDROM_RESULT;
+				}
+
+				// special handling for INT1, because you're supposed to do this before acknowledging it
+				if(got == 1) {
+					// request the data and wait for it to be ready
 					CDROM_ADDRESS = 0;
 					CDROM_HCHPCTL = 0;
 					CDROM_HCHPCTL = CDROM_HCHPCTL_BFRD;
 					CDROM_ADDRESS = 1;
 				}
-				CDROM_HINTSTS = 7; // acknowledge
-				break;
+
+				CDROM_HCLRCTL = 7; // acknowledge the interrupt
+				return;
 			} else {
 				//assert(got != 5);
-				CDROM_HINTSTS = 7; // acknowledge
+				CDROM_HCLRCTL = 7; // acknowledge the interrupt
 			}
 		}
 	}
-	CDROM_HINTSTS = 7; // acknowledge
-	CDROM_HCLRCTL = CDROM_HCLRCTL_CLRPRM; // clear parameter buffer
 }
 
-void psx_cd_run_cmd(u8 cmd, const u8* args, int arg_count) {
+void psx_cd_run_cmd(u8 cmd, const u8* args, int arg_count, u8* result, int result_size) {
+	while(CDROM_HSTS & CDROM_HSTS_BUSYSTS) {
+		asm volatile inline("");
+	}
+
 	CDROM_ADDRESS = 1;
-	u32 timeout = PSX_CD_SPIN_LIMIT;
-	while(CDROM_HSTS & CDROM_HSTS_BUSYSTS) {
-		if(--timeout == 0) abortf("CD command %02x BUSY timeout\n", cmd);
-		asm volatile("");
-	}
-	CDROM_HCLRCTL = CDROM_HCLRCTL_CLRPRM;
+	CDROM_HCLRCTL = 7 | CDROM_HCLRCTL_CLRPRM; // clear interrupts, clear param fifo
 	delayMicroseconds(3);
-	timeout = PSX_CD_SPIN_LIMIT;
-	while(CDROM_HSTS & CDROM_HSTS_BUSYSTS) {
-		if(--timeout == 0) abortf("CD command %02x BUSY timeout\n", cmd);
-		asm volatile("");
+
+	while(!(CDROM_HSTS & CDROM_HSTS_PRMEMPT)) {
+		asm volatile inline("");
 	}
+
 	CDROM_ADDRESS = 0;
 	for(int i = 0; i < arg_count; i++) {
 		CDROM_PARAMETER = args[i];
 	}
 	CDROM_COMMAND = cmd;
-	psx_cd_await_interrupt(3);
-	CDROM_ADDRESS = 1;
-	CDROM_HCLRCTL = CDROM_HCLRCTL_CLRPRM;
+	psx_cd_await_interrupt(3, result, result_size);
 }
 
 MinSecFrame lba_to_msf(u32 lba) {
@@ -139,69 +84,51 @@ MinSecFrame lba_to_msf(u32 lba) {
 
 void psx_cd_do_read(u8* buf, u32 logical_block, u32 sector_count, u8* excess_buf) {
 	MinSecFrame bak_msf;
-	gPsxCdSectorsRead += sector_count + (excess_buf != NULL);
 	if(cd_playing_audio) {
+		u8 stat;
 		do {
-			psx_cd_run_cmd(CDROM_NOP, NULL, 0);
-		} while(CDROM_RESULT & CDROM_STAT_SEEK);
-		psx_cd_run_cmd(CDROM_GETLOCL, NULL, 0);
-		bak_msf.min = CDROM_RESULT;
-		bak_msf.sec = CDROM_RESULT;
-		bak_msf.frame = CDROM_RESULT;
+			psx_cd_run_cmd(CDROM_GETPARAM, NULL, 0, &stat, 1);
+		} while(stat & CDROM_STAT_SEEK);
+		psx_cd_run_cmd(CDROM_GETLOCL, NULL, 0, bak_msf.bytes, 3);
 	}
 
-	psx_cd_set_mode(MODE_2X_SPEED);
+	psx_cd_run_cmd(CDROM_SETMODE, (const u8[]) {MODE_2X_SPEED}, 1, NULL, 0);
 	MinSecFrame msf = lba_to_msf(logical_block);
-	psx_cd_run_cmd(CDROM_SETLOC, (u8*) &msf, 3);
-	gPsxCdSetLocCount++;
-	psx_cd_run_cmd(CDROM_READN, NULL, 0);
-	u8* volatile out_ptr = buf;
-	u8* end_ptr = buf + sector_count * SECTOR_SIZE;
+	psx_cd_run_cmd(CDROM_SETLOC, (u8*) &msf, 3, NULL, 0);
+	psx_cd_run_cmd(CDROM_READN, NULL, 0, NULL, 0);
+	u32 sector = 0;
 	while(true) {
-		u8* cur_dst;
-		if(out_ptr < end_ptr) {
-			cur_dst = out_ptr;
-			out_ptr += SECTOR_SIZE;
+		u8 alignas(u32)* cur_dst;
+		if(sector < sector_count) {
+			cur_dst = buf + sector * SECTOR_SIZE;
+			sector++;
 		} else if(excess_buf) {
 			cur_dst = excess_buf;
-			excess_buf = NULL;
+			excess_buf = NULL; // this will make the next iteration exit
 		} else {
 			break;
 		}
-		psx_cd_await_interrupt(1);
-		u32 drq_timeout = PSX_CD_SPIN_LIMIT;
-		while(!(CDROM_HSTS & CDROM_HSTS_DRQSTS)) {
-			if(--drq_timeout == 0) abortf("CD DRQ timeout at LBA %u\n", logical_block);
-			/*
-			 * Tight polling is intentional during synchronous loading. The old
-			 * 3 us delay can oversleep the DRQ edge thousands of times over a
-			 * full game load without doing useful work.
-			 */
-			__asm__ volatile("");
-		}
+
+		psx_cd_await_interrupt(1, NULL, 0);
+		do {
+			delayMicroseconds(3);
+		} while(!(CDROM_HSTS & CDROM_HSTS_DRQSTS));
 		// sector data ready, now we can start a DMA transfer
 		DMA_MADR(DMA_CDROM) = (u32) cur_dst;
 		DMA_BCR(DMA_CDROM) = SECTOR_SIZE / 4; // the DMA size is in 4-byte words
-		DMA_CHCR(DMA_CDROM) = DMA_CHCR_ENABLE | DMA_CHCR_TRIGGER | DMA_CHCR_MODE_BURST;
+		DMA_CHCR(DMA_CDROM) = DMA_CHCR_ENABLE | DMA_CHCR_READ | DMA_CHCR_TRIGGER | DMA_CHCR_MODE_BURST;
 		// now wait for the DMA
-		u32 dma_timeout = PSX_CD_SPIN_LIMIT;
-		while(DMA_CHCR(DMA_CDROM) & DMA_CHCR_ENABLE) {
-			if(--dma_timeout == 0) abortf("CD DMA timeout at LBA %u\n", logical_block);
-			/*
-			 * CD DMA is short compared with sector arrival time. Poll directly
-			 * instead of forcing a minimum 10 us sleep per observation.
-			 */
-			__asm__ volatile("");
-		}
+		do {
+			delayMicroseconds(10);
+		} while(DMA_CHCR(DMA_CDROM) & DMA_CHCR_ENABLE);
 	}
-	psx_cd_run_cmd(CDROM_PAUSE, NULL, 0);
-	psx_cd_await_interrupt(2);
+	psx_cd_run_cmd(CDROM_PAUSE, NULL, 0, NULL, 0);
+	psx_cd_await_interrupt(2, NULL, 0);
 
 	if(cd_playing_audio) {
-		psx_cd_set_mode(MODE_XA_ADPCM | MODE_XA_SECTOR_FILTER | MODE_2X_SPEED);
-		psx_cd_run_cmd(CDROM_SETLOC, (u8*) &bak_msf, 3);
-		gPsxCdSetLocCount++;
-		psx_cd_run_cmd(CDROM_READS, NULL, 0);
+		psx_cd_run_cmd(CDROM_SETMODE, (const u8[]) {MODE_XA_ADPCM | MODE_XA_SECTOR_FILTER | MODE_2X_SPEED}, 1, NULL, 0);
+		psx_cd_run_cmd(CDROM_SETLOC, (u8*) &bak_msf, 3, NULL, 0);
+		psx_cd_run_cmd(CDROM_READS, NULL, 0, NULL, 0);
 	}
 }
 
@@ -211,43 +138,24 @@ void psx_cd_do_read(u8* buf, u32 logical_block, u32 sector_count, u8* excess_buf
 // but since we only need 1 file in this game it's perfectly fine
 u32 psx_cd_find_file_lba(const char* name) {
 	u32 name_len = strlen(name);
-	ALIGNED4 u8 tmp[SECTOR_SIZE];
-
-	psx_cd_do_read(tmp, 16, 1, NULL); // primary volume descriptor
-	u32 root_lba = UNALIGNED_U32(tmp + 158);
-	u32 root_len = UNALIGNED_U32(tmp + 166);
-
-	/*
-	 * Walk the complete ISO9660 root directory sector by sector.  The old code
-	 * read one 2048-byte sector and then trusted root_len, which becomes an
-	 * out-of-bounds read as soon as the root directory grows beyond one sector.
-	 */
-	for(u32 dir_off = 0; dir_off < root_len; dir_off += SECTOR_SIZE) {
-		psx_cd_do_read(tmp, root_lba + dir_off / SECTOR_SIZE, 1, NULL);
-
-		u32 valid = root_len - dir_off;
-		if(valid > SECTOR_SIZE) valid = SECTOR_SIZE;
-
-		for(u32 i = 0; i < valid;) {
-			u8 entry_size = tmp[i];
-
-			// A zero-length record pads the rest of this logical sector.
-			if(entry_size == 0) break;
-			if(i + entry_size > valid || entry_size < 34) break;
-
-			u32 contents_lba = UNALIGNED_U32(tmp + i + 2);
-			u8 entry_filename_len = tmp[i + 32];
-
-			if((u32) 33 + entry_filename_len <= entry_size
-			   && name_len == entry_filename_len
-			   && !strncmp((const char*) (tmp + i + 33), name, entry_filename_len)) {
-				return contents_lba;
-			}
-
-			i += entry_size;
+	u8 alignas(u32) tmp[SECTOR_SIZE];
+	psx_cd_do_read(tmp, 16, 1, NULL); // read the primary volume descriptor
+	u32 root_lba = *(u32*) (tmp + 158); // get the pointer to the root folder data from it
+	u32 root_len = *(u32*) (tmp + 166);
+	psx_cd_do_read(tmp, root_lba, 1, NULL);
+	u32 i = 0;
+	//printf("root dir lba: %u len: %u\n", root_lba, root_len);
+	while(i < root_len && tmp[i] != 0) {
+		u8 entry_size = tmp[i];
+		u32 contents_lba = UNALIGNED_U32(tmp + i + 2);
+		//u32 contents_size = UNALIGNED_U32(tmp + i + 10);
+		u8 entry_filename_len = *(tmp + i + 32);
+		if(name_len == entry_filename_len && !strncmp((const char*) (tmp + i + 33), name, entry_filename_len)) {
+			//printf("file: (len %u) %.*s (size %u contents %u size %u)\n", entry_filename_len, entry_filename_len, tmp + i + 33, entry_size, contents_lba, contents_size);
+			return contents_lba;
 		}
+		i += entry_size;
 	}
-
 	abortf("could not find file '%s'\n", name);
 }
 
@@ -256,7 +164,7 @@ u32 psx_cd_find_file_lba(const char* name) {
 #ifdef BENCH
 
 static u8 ext_files_dat[] = {
-#embed <ext_files.dat>
+	#embed <ext_files.dat>
 };
 
 void cd_read(void* out, u32 pos, u32 size) {
@@ -375,7 +283,7 @@ void cd_read(void* out, u32 pos, u32 size) {
 		for(u32 i = 0; i + 16 <= size; i += 16) {
 			u32* chunk = out + i;
 			u32 w0 = chunk[0], w1 = chunk[1], w2 = chunk[2], w3 = chunk[3];
-			asm volatile("");
+			asm volatile inline("");
 			hash = __builtin_stdc_rotate_left(hash, 1) + (w0 ^ w1 ^ w2 ^ w3);
 		}
 		if(hash == expected_hash) {
@@ -388,27 +296,21 @@ void cd_read(void* out, u32 pos, u32 size) {
 #else
 
 void cd_read(void* out, u32 pos, u32 size) {
-	/*
-	 * Do NOT redraw the loading screen for every asset read.  Level loading can
-	 * issue many cd_read() calls; forcing a complete frame here causes visible
-	 * flashing and wastes CPU/GPU time between CD transactions.
-	 *
-	 * A caller that wants a loading screen should draw it once before beginning
-	 * a batch of loads.
-	 */
-	gPsxCdReadCalls++;
-	gPsxCdBytesRead += size;
-
-	if(!dma_inited) {
+	if(cd_inited) {
+		gfx_show_message_screen("caricamento", "", "");
+	} else {
 		BIU_COM_DELAY = 0x1325;
 		BIU_DEV5_CTRL = 0x00020943; // enable cdrom bus
-		DMA_DPCR |= DMA_DPCR_ENABLE << (DMA_CDROM * 4); // enable CD DMA
+		DMA_DPCR |= DMA_DPCR_ENABLE << (DMA_CDROM * 4); // enable cd dma
+
 		CDROM_ADDRESS = 1;
-		CDROM_HINTMSK_W = 7; // enable all response interrupts
-		CDROM_HCLRCTL = 7; // clear any pending responses just in case
+		CDROM_HINTMSK_W = 7; // enable all response interrupt flags
+		CDROM_HCLRCTL = 0x7F; // clear any pending responses, clear xa-adpcm buffer, clear param fifo
+
 		// clear request state
 		CDROM_ADDRESS = 0;
 		CDROM_HCHPCTL = 0;
+
 		// reset cd audio playback in both channels
 		CDROM_ADDRESS = 2;
 		CDROM_ATV0 = 128;
@@ -417,60 +319,34 @@ void cd_read(void* out, u32 pos, u32 size) {
 		CDROM_ATV2 = 128;
 		CDROM_ATV3 = 0;
 		CDROM_ADPCTL = CDROM_ADPCTL_CHNGATV;
+
 		// initialize
-		psx_cd_run_cmd(CDROM_NOP, NULL, 0);
-		psx_cd_run_cmd(CDROM_NOP, NULL, 0);
-		psx_cd_run_cmd(CDROM_INIT, NULL, 0);
-		psx_cd_run_cmd(CDROM_DEMUTE, NULL, 0);
-		sPsxCdMode = PSX_CD_MODE_UNKNOWN;
+		psx_cd_run_cmd(CDROM_NOP, NULL, 0, NULL, 0);
+		psx_cd_run_cmd(CDROM_NOP, NULL, 0, NULL, 0);
+		psx_cd_run_cmd(CDROM_INIT, NULL, 0, NULL, 0);
+		psx_cd_await_interrupt(2, NULL, 0);
+		psx_cd_run_cmd(CDROM_DEMUTE, NULL, 0, NULL, 0);
 
 		dat_lba = psx_cd_find_file_lba("EXT.DAT;1");
 		assert(dat_lba);
-		dma_inited = true;
+		cd_inited = true;
 	}
-	/*
-	 * EXT.DAT itself starts on a sector boundary, but individual DMA requests
-	 * do not have to. Keep the original proven CD controller path and handle
-	 * byte offsets here, outside psx_cd_do_read().
-	 */
-	u8 *dst = (u8 *) out;
+
+	// the segment starts are already aligned to sectors by makextfiles.c
+	assert(pos % SECTOR_SIZE == 0);
 	u32 sector = dat_lba + pos / SECTOR_SIZE;
-	u32 offset = pos % SECTOR_SIZE;
-
-	if (size == 0) {
-		return;
-	}
-
-	/* Unaligned head. */
-	if (offset != 0) {
-		ALIGNED4 u8 first[SECTOR_SIZE];
-		psx_cd_do_read(first, sector, 1, NULL);
-
-		u32 copy = SECTOR_SIZE - offset;
-		if (copy > size) {
-			copy = size;
-		}
-
-		memcpy(dst, first + offset, copy);
-		dst += copy;
-		size -= copy;
-		sector++;
-
-		if (size == 0) {
-			return;
-		}
-	}
-
-	/* Aligned middle + optional final partial sector. */
 	u32 sector_count = size / SECTOR_SIZE;
-	u32 tail = size % SECTOR_SIZE;
-
-	if (tail != 0) {
-		ALIGNED4 u8 excess[SECTOR_SIZE];
-		psx_cd_do_read(dst, sector, sector_count, excess);
-		memcpy(dst + sector_count * SECTOR_SIZE, excess, tail);
-	} else if (sector_count != 0) {
-		psx_cd_do_read(dst, sector, sector_count, NULL);
+	if(sector_count) {
+		psx_cd_do_read(out, sector, sector_count, NULL);
+	}
+	u32 excess_size = size % SECTOR_SIZE;
+	if(excess_size > size) {
+		excess_size = size;
+	}
+	if(excess_size) {
+		u8 alignas(u32) excess[SECTOR_SIZE];
+		psx_cd_do_read(excess, sector + sector_count, 1, NULL);
+		memcpy(out + sector_count * SECTOR_SIZE, excess, excess_size);
 	}
 }
 

@@ -522,7 +522,7 @@ def write_aiff(entry, filename):
         write_aifc(entry, temp)
         temp.flush()
         temp.close()
-        aifc_decode = os.path.join(os.path.dirname(__file__), "aifc_decode")
+        aifc_decode = os.path.join(os.path.dirname(__file__), "build/aifc_decode")
         subprocess.run([aifc_decode, temp.name, filename], check=True)
     finally:
         temp.close()

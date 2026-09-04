@@ -10,7 +10,7 @@ typedef union __attribute__((aligned(4))) {
 		u8 r;
 		u8 g;
 		u8 b;
-		u8 _pad;
+		u8 a;
 	};
 	u8 elems[4];
 	u32 as_u32;
@@ -18,8 +18,6 @@ typedef union __attribute__((aligned(4))) {
 
 // render distance in world space, anything farther will be clipped
 #define MAX_Z 8000 // for performance, should be equal to Z_BUCKETS multiplied by a power of two
-#define MAX_TESSELLATION_Z 1000
-#define MAX_HIGH_TESSELLATION_Z 500
 
 void gfx_init();
 void gfx_end_frame(bool vsync_30fps);
@@ -102,8 +100,7 @@ void gfx_run_compiled_dl(dl_t* dl);
 #define PRIM_FLAG_FORCE_BLEND     0b00001000
 #define PRIM_FLAG_ENV_COLOR       0b00010000
 //#define PRIM_FLAG_ENV_ALPHA ...
-#define PRIM_FLAG_TESSELLATE  0b01000000
-//#define PRIM_FLAG_TESSELLATE_HIGH 0b10000000
+#define PRIM_FLAG_TESSELLATE      0b00100000
 
 enum {
 	_DL_CMD_ENUM_START = (u8) G_NOOP + 1,
@@ -126,7 +123,6 @@ enum {
 	DL_CMD_SET_BACKGROUND,
 	DL_CMD_SET_ORTHO,
 	DL_CMD_SPRITE,
-	DL_CMD_CIRCLE_SHADOW,
 	// the commands below are less common and are split off so that the loop can fit in icache
 	_DL_CMD_ENUM_FIRST_EXTRA,
 	DL_CMD_MTX_MUL = _DL_CMD_ENUM_FIRST_EXTRA,
@@ -134,6 +130,7 @@ enum {
 	DL_CMD_MTX_POP,
 	DL_CMD_MTX_N64_SET,
 	DL_CMD_MTX_N64_MUL,
+	DL_CMD_CIRCLE_SHADOW,
 	DL_CMD_SQUARE_SHADOW,
 	_DL_CMD_ENUM_POST_END,
 	_DL_CMD_ENUM_END = _DL_CMD_ENUM_POST_END - 1,

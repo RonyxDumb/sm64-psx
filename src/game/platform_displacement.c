@@ -126,9 +126,9 @@ void apply_platform_displacement(u32 isMario, struct Object *platform) {
         platformPosYi = IFIELD(platform, oPosY);
         platformPosZi = IFIELD(platform, oPosZ);
 
-        currentObjectOffseti.vx = xi - platformPosXi;
-        currentObjectOffseti.vy = yi - platformPosYi;
-        currentObjectOffseti.vz = zi - platformPosZi;
+        currentObjectOffseti.x = xi - platformPosXi;
+        currentObjectOffseti.y = yi - platformPosYi;
+        currentObjectOffseti.z = zi - platformPosZi;
 
         rotation[0] = platform->oFaceAnglePitch - platform->oAngleVelPitch;
         rotation[1] = platform->oFaceAngleYaw - platform->oAngleVelYaw;
@@ -146,9 +146,9 @@ void apply_platform_displacement(u32 isMario, struct Object *platform) {
         mtx_transpose(&scratch_mtx);
         newObjectOffseti = mtx_apply(&relativeOffseti, &scratch_mtx);
 
-        xi = platformPosXi + newObjectOffseti.vx;
-        yi = platformPosYi + newObjectOffseti.vy;
-        zi = platformPosZi + newObjectOffseti.vz;
+        xi = platformPosXi + newObjectOffseti.x;
+        yi = platformPosYi + newObjectOffseti.y;
+        zi = platformPosZi + newObjectOffseti.z;
     }
 
     if (isMario) {

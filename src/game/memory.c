@@ -64,17 +64,6 @@ struct MainPoolBlock* main_pool_head_right;
 void* main_pool_start_addr;
 void* main_pool_end_addr;
 
-// PS1 RAM diagnostic: smallest amount of main-pool space observed since init.
-// Kept as a global symbol so PCSX-Redux/GDB can inspect it without logging every allocation.
-u32 gMainPoolLowWatermark;
-
-/* PS1 loader profiling, inspectable in PCSX-Redux/GDB. */
-#ifdef TARGET_PSX
-u32 gPsxSegmentLoadCount;
-u32 gPsxSegmentBytesLoaded;
-u32 gPsxLargestSegmentLoad;
-#endif
-
 static struct MainPoolState* gMainPoolState = NULL;
 
 uintptr_t set_segment_base_addr(s32 segment, void *addr) {
@@ -121,7 +110,6 @@ void main_pool_init(void* start, void* end) {
 	main_pool_head_right = (struct MainPoolBlock*) end - 1;
 	main_pool_start_addr = start;
 	main_pool_end_addr = end;
-	gMainPoolLowWatermark = (uintptr_t) main_pool_head_right - (uintptr_t) (main_pool_head_left + 1);
 }
 
 /**
@@ -131,22 +119,17 @@ void main_pool_init(void* start, void* end) {
  */
 void *main_pool_alloc(u32 size, u32 side) {
 	size = ALIGNPTR(size);
-	u32 available_before = main_pool_available();
-	assertmf(available_before >= size, "main pool full", "required %d bytes, only %d available\n", size, available_before);
+	assertmf(main_pool_available() >= size, "main pool full", "required %d bytes, only %d available\n", size, main_pool_available());
 	if(side == MEMORY_POOL_LEFT) {
 		struct MainPoolBlock* new_block = main_pool_head_left;
 		main_pool_head_left = (struct MainPoolBlock*) ((u8*) (main_pool_head_left + 1) + size);
 		main_pool_head_left->prev = new_block;
-		u32 available_after = main_pool_available();
-		if(available_after < gMainPoolLowWatermark) gMainPoolLowWatermark = available_after;
 		return new_block + 1;
 	} else {
 		struct MainPoolBlock* prev = main_pool_head_right;
 		main_pool_head_right = (struct MainPoolBlock*) ((u8*) (main_pool_head_right - 1) - size);
 		struct MainPoolBlock* new_block = main_pool_head_right;
 		new_block->prev = prev;
-		u32 available_after = main_pool_available();
-		if(available_after < gMainPoolLowWatermark) gMainPoolLowWatermark = available_after;
 		return new_block + 1;
 	}
 }
@@ -181,8 +164,6 @@ void* main_pool_realloc(void* addr, u32 size) {
 	main_pool_head_left = (struct MainPoolBlock*) ((u8*) (prev + 1) + size);
 	main_pool_head_left->prev = prev;
 	assert(main_pool_head_left + 1 <= main_pool_head_right);
-	u32 available_after = main_pool_available();
-	if(available_after < gMainPoolLowWatermark) gMainPoolLowWatermark = available_after;
 	return addr;
 }
 
@@ -229,21 +210,7 @@ void dma_read(u8 *dest, const u8 *srcStart, const u8 *srcEnd) {
 	}
 	assert(!((uintptr_t) dest % 4));
 	assert((uintptr_t) srcStart >= 4096);
-	u32 transfer_size = (uintptr_t) srcEnd - (uintptr_t) srcStart;
-#ifdef TARGET_PSX
-	gPsxSegmentLoadCount++;
-	gPsxSegmentBytesLoaded += transfer_size;
-	if(transfer_size > gPsxLargestSegmentLoad) {
-		gPsxLargestSegmentLoad = transfer_size;
-	}
-#endif
-	/*
-	 * Keep this as one contiguous cd_read().  The PS1 CD backend already
-	 * transfers every sector in the request under one READN command, so
-	 * splitting this into artificial 2/4 KiB chunks would add SETLOC/PAUSE
-	 * overhead and make loading slower.
-	 */
-	cd_read(dest, (uintptr_t) srcStart - 4096, transfer_size);
+	cd_read(dest, (uintptr_t) srcStart - 4096, (uintptr_t) srcEnd - (uintptr_t) srcStart);
 }
 
 /**
@@ -469,23 +436,11 @@ s32 load_patchable_table(struct DmaHandlerList *list, s32 index) {
 	if(segmented_addr != list->currentAddr) {
 		list->currentAddr = segmented_addr;
 		u32 size = table->anim[index].size;
-		u32 start = (u32) (uintptr_t) segmented_addr;
-		// if it doesn't begin aligned to a sector, load that part separately
-		u32 unaligned_part_size = 0;
-		if(start % SECTOR_SIZE != 0) {
-			u32 aligned_down = start / SECTOR_SIZE * SECTOR_SIZE;
-			ALIGNED4 u8 tmp[SECTOR_SIZE];
-			dma_read(tmp, segmented_addr, segmented_addr + SECTOR_SIZE);
-			u32 start_in_sector = start - aligned_down;
-			unaligned_part_size = SECTOR_SIZE - start_in_sector;
-			if(unaligned_part_size > size) {
-				unaligned_part_size = size;
-			}
-			memcpy(list->bufTarget, tmp + start_in_sector, unaligned_part_size);
-		}
-		if(size > unaligned_part_size) {
-			dma_read(list->bufTarget + unaligned_part_size, segmented_addr + unaligned_part_size, segmented_addr + size);
-		}
+		#ifdef TARGET_PSX
+		// i don't remember why it's already aligned
+		assert((uintptr_t) segmented_addr % SECTOR_SIZE == 0);
+		#endif
+		dma_read(list->bufTarget, segmented_addr, segmented_addr + size);
 	}
 	return TRUE;
 }
@@ -496,11 +451,12 @@ s32 load_patchable_table(struct DmaHandlerList *list, s32 index) {
 
 #ifdef TARGET_PSX
 
-#if 0
+#ifdef BIG_RAM
 
-static u8 mario_anim_buffer[(ANIM_SEGMENT_SIZE + 2047) / 2048 * 2048];
+static u8 alignas(u32) mario_anim_buffer[(ANIM_SEGMENT_SIZE + SECTOR_SIZE - 1) / SECTOR_SIZE * SECTOR_SIZE];
 
 u32 setup_mario_anims(struct DmaHandlerList *list, void *segment_start, void *segment_end, void *buffer) {
+	assert(segment_end - segment_start <= ANIM_SEGMENT_SIZE);
 	dma_read(mario_anim_buffer, segment_start, segment_end);
 	list->dmaTable = (struct DmaTable*) mario_anim_buffer;
 	list->currentAddr = NULL;
@@ -509,6 +465,7 @@ u32 setup_mario_anims(struct DmaHandlerList *list, void *segment_start, void *se
 }
 
 static void receive(uint8_t* buf, uint32_t start, uint32_t len) {
+	assert(ANIM_TABLE_SIZE + start + len <= sizeof(mario_anim_buffer));
 	memcpy(buf, mario_anim_buffer + ANIM_TABLE_SIZE + start, len);
 }
 
@@ -519,11 +476,10 @@ static void receive(uint8_t* buf, uint32_t start, uint32_t len) {
 #define VRAM_WIDTH 384
 #define VRAM_ROW_BYTES (VRAM_WIDTH * 2)
 #define VRAM_HEIGHT ((ANIM_MAIN_DATA_SIZE + VRAM_ROW_BYTES - 1) / VRAM_ROW_BYTES)
-#define VRAM_PART (VRAM_ROW_BYTES * VRAM_HEIGHT)
 STATIC_ASSERT(VRAM_HEIGHT < 256, "mario animations won't fit in the designated vram area");
 
 u32 setup_mario_anims(struct DmaHandlerList *list, void *segment_start, UNUSED void *segment_end, void *buffer) {
-	void* seg_buf = main_pool_alloc((ANIM_SEGMENT_SIZE + 2047) / 2048 * 2048, MEMORY_POOL_LEFT);
+	void* seg_buf = main_pool_alloc((ANIM_SEGMENT_SIZE + SECTOR_SIZE - 1) / SECTOR_SIZE * SECTOR_SIZE, MEMORY_POOL_LEFT);
 	dma_read(seg_buf, segment_start, segment_start + ANIM_SEGMENT_SIZE);
 	u32 just_table_size = ((struct DmaTable*) seg_buf)->count * sizeof(struct OffsetSizePair) + sizeof(struct DmaTable);
 
@@ -537,19 +493,24 @@ u32 setup_mario_anims(struct DmaHandlerList *list, void *segment_start, UNUSED v
 }
 
 static void receive(uint8_t* buf, uint32_t start, uint32_t len) {
-	assert(start % 2 == 0);
-	if(len % 2 != 0) {
-		len++;
-	}
-	assert(start + len < VRAM_ROW_BYTES * VRAM_HEIGHT);
+	assert(start + len < ANIM_MAIN_DATA_SIZE);
 	u32 y = VRAM_Y + start / VRAM_ROW_BYTES;
-	while(len) {
-		u32 inner_x = start % VRAM_ROW_BYTES / 2;
-		u32 w = MIN(len / 2, VRAM_WIDTH - inner_x);
-		receiveVRAMData(buf, VRAM_X + inner_x, y, ((w + 1) / 2 + DMA_MAX_CHUNK_SIZE - 1) / DMA_MAX_CHUNK_SIZE * DMA_MAX_CHUNK_SIZE * 2, 1);
-		start += w * 2;
-		len -= w * 2;
-		buf += w * 2;
+	u32 first_row_offset = start % VRAM_ROW_BYTES;
+	u32 pos = 0;
+	while(pos < len) { // TODO: optimize this perhaps?
+		u8 alignas(u32) row[VRAM_ROW_BYTES];
+		receiveVRAMData(row, VRAM_X, y, VRAM_WIDTH, 1);
+		u32 copy_offset = 0;
+		u32 copy_len = VRAM_ROW_BYTES;
+		if(pos == 0) {
+			copy_offset = first_row_offset;
+			copy_len = VRAM_ROW_BYTES - first_row_offset;
+			if(len < copy_len) {
+				copy_len = len;
+			}
+		}
+		memcpy(buf + pos, row + copy_offset, copy_len);
+		pos += copy_len;
 		y++;
 	}
 }
@@ -584,7 +545,8 @@ s32 load_mario_anim(struct DmaHandlerList *list, s32 index) {
 		u32 full_off = table->anim[index].offset;
 		if((u32) (uintptr_t) list->currentAddr != full_off) {
 			list->currentAddr = (void*) (uintptr_t) full_off;
-			u32 size = table->anim[index].size;
+			u32 size = (table->anim[index].size + 3) / 4 * 4;
+			assert(size <= 0x3000);
 			receive(list->bufTarget, full_off - ANIM_TABLE_SIZE, size);
 			return true;
 		}

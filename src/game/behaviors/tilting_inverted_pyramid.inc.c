@@ -68,9 +68,9 @@ void bhv_tilting_inverted_pyramid_loop(void) {
     if (gMarioObject->platform == o) {
         get_mario_posi(&mxi, &myi, &mzi);
 
-        disti.vx = IFIELD(gMarioObject, oPosX) - IFIELD(o, oPosX);
-        disti.vy = IFIELD(gMarioObject, oPosY) - IFIELD(o, oPosY);
-        disti.vz = IFIELD(gMarioObject, oPosZ) - IFIELD(o, oPosZ);
+        disti.x = IFIELD(gMarioObject, oPosX) - IFIELD(o, oPosX);
+        disti.y = IFIELD(gMarioObject, oPosY) - IFIELD(o, oPosY);
+        disti.z = IFIELD(gMarioObject, oPosZ) - IFIELD(o, oPosZ);
         posBeforeRotationi = mtx_apply_without_translation(&disti, &o->transformq);
 
         s32 dxi = IFIELD(gMarioObject, oPosX) - IFIELD(o, oPosX);
@@ -111,9 +111,9 @@ void bhv_tilting_inverted_pyramid_loop(void) {
     // If Mario is on the platform, adjust his position for the platform tilt.
     if (marioOnPlatform != FALSE) {
         ShortVec posAfterRotationi = mtx_apply_without_translation(&disti, &o->transformq);
-        mxi += posAfterRotationi.vx - posBeforeRotationi.vx;
-        myi += posAfterRotationi.vy - posBeforeRotationi.vy;
-        mzi += posAfterRotationi.vz - posBeforeRotationi.vz;
+        mxi += posAfterRotationi.x - posBeforeRotationi.x;
+        myi += posAfterRotationi.y - posBeforeRotationi.y;
+        mzi += posAfterRotationi.z - posBeforeRotationi.z;
         set_mario_posi(mxi, myi, mzi);
     }
 

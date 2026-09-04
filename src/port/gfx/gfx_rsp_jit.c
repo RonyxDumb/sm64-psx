@@ -1,5 +1,8 @@
+#include "port/gfx/gfx.h"
 #include <PR/gbi.h>
 #include <port/gfx/gfx_internal.h>
+#include <port/psx/scratchpad_call.h>
+#include <game/memory.h>
 #include <game/game_init.h>
 #include <engine/graph_node.h>
 #include <engine/math_util.h>
@@ -7,12 +10,14 @@
 
 // N64 display list emulation
 
+extern struct GraphNodePerspective* gCurGraphNodeCamFrustum;
 extern bool compile_as_ortho;
 bool compilation_happened_this_frame = false;
 
 static int texture_scale_x, texture_scale_y;
 static bool use_env_color = false;
 static bool use_env_alpha = false;
+static bool use_color = false;
 static bool use_texture = false;
 static u32 geometry_mode = 0;
 static u32 other_mode_l = 0;
@@ -21,11 +26,17 @@ static TexHeader* compilation_tex_header = NULL;
 static VtxList* compilation_vertices = NULL;
 static bool compilation_clamp = false;
 
+// Static area geometry is tessellated offline by preprocess_graphics.py.
+// Runtime vanity tessellation is kept for genuinely large/dynamic polygons;
+// clip-plane recovery in gfx_dl_exec_psx.c no longer depends on this flag.
+#define RUNTIME_TESSELLATION_THRESHOLD 384
+
 void gfx_reset_rsp_jit() {
 	texture_scale_x = 1 << 21;
 	texture_scale_y = 1 << 21;
 	use_env_color = false;
 	use_env_alpha = false;
+	use_color = false;
 	use_texture = false;
 	geometry_mode = G_LIGHTING;
 	other_mode_l = 0;
@@ -35,46 +46,38 @@ void gfx_reset_rsp_jit() {
 	compilation_clamp = false;
 }
 
-ALWAYS_INLINE static int clamp(int x, int a, int b) {
+static int clamp(int x, int a, int b) {
 	return x < a? a: (x > b? b: x);
 }
 
 void ensure_vertices_converted(VtxList* list, u32 count) {
 	TexHeader* tex = compilation_tex_header;
 	if(list->tag != COMPILED_TAG) {
-		const bool has_tex = tex != NULL;
-		const bool rotated = has_tex && tex->rotated;
-		const s32 scale_x = texture_scale_x >> 8;
-		const s32 scale_y = texture_scale_y >> 8;
-		const u16 tex_width = has_tex ? tex->width : 0;
-		const u16 tex_height = has_tex ? tex->height : 0;
-		const bool clamp_uv = compilation_clamp;
-
 		for(u32 i = 0; i < count; i++) {
 			Vtx* n64 = &list->n64[i];
 			s16 x = n64->v.ob[0];
 			s16 y = n64->v.ob[1];
 			s16 z = n64->v.ob[2];
-			s32 u = (s32) n64->v.tc[rotated ? 1 : 0] * scale_x >> (21 - 8);
-			s32 v = (s32) n64->v.tc[rotated ? 0 : 1] * scale_y >> (21 - 8);
-			if(has_tex) {
-				if(clamp_uv) {
-					u = clamp(u, 0, tex_width);
-					v = clamp(v, 0, tex_height);
+			s32 u = (s32) n64->v.tc[(tex && tex->rotated)? 1: 0] * (texture_scale_x >> 8) >> (21 - 8);
+			s32 v = (s32) n64->v.tc[(tex && tex->rotated)? 0: 1] * (texture_scale_y >> 8) >> (21 - 8);
+			if(tex) {
+				if(compilation_clamp) {
+					u = clamp(u, 0, tex->width);
+					v = clamp(v, 0, tex->height);
 				} else {
-					if(tex_width <= 32) {
+					if(tex->width <= 32) {
 						u = clamp(u + 128, 0, 255);
-					} else if(tex_width <= 64) {
+					} else if(tex->width <= 64) {
 						u = clamp(u + 64, 0, 255);
 					}
-					if(tex_height <= 32) {
+					if(tex->height <= 32) {
 						v = clamp(v + 128, 0, 255);
-					} else if(tex_height <= 64) {
+					} else if(tex->height <= 64) {
 						v = clamp(v + 64, 0, 255);
 					}
 				}
 			}
-			Color color = (Color) {.r = n64->v.cn[0], .g = n64->v.cn[1], .b = n64->v.cn[2], ._pad = 0};
+			Color color = {.r = n64->v.cn[0], .g = n64->v.cn[1], .b = n64->v.cn[2], .a = 0};
 
 			GfxVtx* psx = &list->psx[i];
 			psx->x = x;
@@ -88,6 +91,19 @@ void ensure_vertices_converted(VtxList* list, u32 count) {
 	}
 }
 
+static int min3(int x, int y, int z) {
+	if(y < x) {
+		x = y;
+	}
+	return z < x? z: x;
+}
+
+static int max3(int x, int y, int z) {
+	if(y > x) {
+		x = y;
+	}
+	return z > x? z: x;
+}
 
 // returns true if the compiled display list is not empty
 [[gnu::flatten]] bool gfx_compile_rsp(Gfx* cmd, bool nested) {
@@ -121,19 +137,28 @@ void ensure_vertices_converted(VtxList* list, u32 count) {
 				u32 i2 = (cmd->words.w1 & 0xFF) / 10;
 				goto process_poly_cmd;
 			case (u8) G_PORT_QUAD:
+				if(!compilation_vertices) {
+					break;
+				}
 				i0 = cmd->words.w1 >> 24 & 0xF;
 				i1 = cmd->words.w1 >> 16 & 0xF;
 				i2 = cmd->words.w1 >> 8 & 0xF;
 				u32 i3 = cmd->words.w1 & 0xF;
+				GfxVtx* v3 = &compilation_vertices->psx[i3];
 				goto process_poly_cmd;
 			case (u8) G_PORT_TRI2:
 				i0 = cmd->words.w0 >> 16 & 0xF;
 				i1 = cmd->words.w0 >> 8 & 0xF;
 				i2 = cmd->words.w0 & 0xF;
 			process_poly_cmd:
+				if(!compilation_vertices) {
+					break;
+				}
+				GfxVtx* v0 = &compilation_vertices->psx[i0];
+				GfxVtx* v1 = &compilation_vertices->psx[i1];
+				GfxVtx* v2 = &compilation_vertices->psx[i2];
 				u32 flags = 0;
-				const bool textured = use_texture && compilation_tex_header;
-				if(textured) flags |= PRIM_FLAG_TEXTURED;
+				if(use_texture && compilation_tex_header) flags |= PRIM_FLAG_TEXTURED;
 				if(use_env_color) flags |= PRIM_FLAG_ENV_COLOR;
 #ifdef PRIM_FLAG_ENV_ALPHA
 				if(use_env_alpha) flags |= PRIM_FLAG_ENV_ALPHA;
@@ -144,6 +169,38 @@ void ensure_vertices_converted(VtxList* list, u32 count) {
 					}
 					if((other_mode_l & ZMODE_DEC) == ZMODE_DEC) {
 						flags |= PRIM_FLAG_DECAL;
+					} else if(use_texture && compilation_tex_header) {
+						s32 min_x = min3(v0->x, v1->x, v2->x);
+						s32 min_y = min3(v0->y, v1->y, v2->y);
+						s32 min_z = min3(v0->z, v1->z, v2->z);
+						s32 max_x = max3(v0->x, v1->x, v2->x);
+						s32 max_y = max3(v0->y, v1->y, v2->y);
+						s32 max_z = max3(v0->z, v1->z, v2->z);
+						if(opcode == G_PORT_QUAD) {
+							if(v3->x < min_x) {
+								min_x = v3->x;
+							} else if(v3->x > max_x) {
+								max_x = v3->x;
+							}
+							if(v3->y < min_y) {
+								min_y = v3->y;
+							} else if(v3->y > max_y) {
+								max_y = v3->y;
+							}
+							if(v3->z < min_z) {
+								min_z = v3->z;
+							} else if(v3->z > max_z) {
+								max_z = v3->z;
+							}
+						}
+						u32 width = max_x - min_x;
+						u32 height = max_y - min_y;
+						u32 depth = max_z - min_z;
+						u32 size_heuristic = sqrtu(width * width + height * height + depth * depth);
+						// tasselation reintegration.
+						if(size_heuristic > RUNTIME_TESSELLATION_THRESHOLD) {
+							flags |= PRIM_FLAG_TESSELLATE;
+						}
 					}
 				}
 				if(opcode == G_PORT_QUAD) {
@@ -263,6 +320,7 @@ void ensure_vertices_converted(VtxList* list, u32 count) {
 				use_env_color = c_color_src == G_CCMUX_ENVIRONMENT || d_color_src == G_CCMUX_ENVIRONMENT;
 				use_env_alpha = c_alpha_src == G_CCMUX_ENVIRONMENT || d_alpha_src == G_CCMUX_ENVIRONMENT;
 				//assert(use_env_color == use_env_alpha);
+				use_color = !use_env_color && (a_color_src == G_CCMUX_SHADE || b_color_src == G_CCMUX_SHADE || c_color_src == G_CCMUX_SHADE || d_color_src == G_CCMUX_SHADE);
 				use_texture = a_color_src == G_CCMUX_TEXEL0 || b_color_src == G_CCMUX_TEXEL0 || c_color_src == G_CCMUX_TEXEL0 || d_color_src == G_CCMUX_TEXEL0;
 				if(b_color_src == d_color_src) {
 					other_mode_l |= ZMODE_DEC;
@@ -283,16 +341,6 @@ void ensure_vertices_converted(VtxList* list, u32 count) {
 				break;
 			}
 			case (u8) G_SETTIMG: {
-				/*
-				 * Always emit the texture binding into the compiled DL.
-				 *
-				 * Do NOT deduplicate this against compilation_tex_header: nested
-				 * display lists can later execute under a different runtime tex_ptr.
-				 * A child DL must therefore be self-contained with respect to the
-				 * texture state established by its G_SETTIMG commands.
-				 *
-				 * gfx_load_texture() already has its own residency fast path.
-				 */
 				compilation_tex_header = segmented_to_virtual((u8*) cmd->words.w1);
 				if(compilation_tex_header) {
 					gfx_load_texture(compilation_tex_header);

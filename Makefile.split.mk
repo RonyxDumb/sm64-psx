@@ -18,7 +18,7 @@ TEXTURE_DIRS := \
 
 # NOTE: textures assume naming convention "texture.<encoding>.png" generates "texture.<encoding>"
 
-ifneq ($(BENCH),0)
+ifeq ($(BENCH),1)
 ACTOR_GROUPS := \
 	group3  \
 	group14 \

@@ -5,9 +5,9 @@
 
 #define GDF_JOINT_WEIGHT(index_, amount_) (GdfJointWeight) {.index = (index_), .amount = (amount_) * ONE / 100}
 #define GDF_MATERIAL(rf, gf, bf) (Color) {.r = (rf) * 255, .g = (gf) * 255, .b = (bf) * 255}
-#define GDF_SCALE(xf, yf, zf) (ShortVec) {.vx = (xf) * ONE, .vy = (yf) * ONE, .vz = (zf) * ONE}
-#define GDF_ROTATION(xf, yf, zf) (ShortVec) {.vx = (short) ((xf) * 65536 / 360), .vy = (short) ((yf) * 65536 / 360), .vz = (short) ((zf) * 65536 / 360)}
-#define GDF_POSITION(xf, yf, zf) (ShortVec) {.vx = (xf), .vy = (yf), .vz = (zf)}
+#define GDF_SCALE(xf, yf, zf) (ShortVec) {.x = (xf) * ONE, .y = (yf) * ONE, .z = (zf) * ONE}
+#define GDF_ROTATION(xf, yf, zf) (ShortVec) {.x = (short) ((xf) * 65536 / 360), .y = (short) ((yf) * 65536 / 360), .z = (short) ((zf) * 65536 / 360)}
+#define GDF_POSITION(xf, yf, zf) (ShortVec) {.x = (xf), .y = (yf), .z = (zf)}
 
 extern struct GdVtxData mario_Face_VtxInfo;
 extern struct GdFaceData mario_Face_FaceInfo;

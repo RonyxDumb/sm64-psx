@@ -38,15 +38,15 @@ static void save_config(void) {
 #endif
 
 #ifdef TARGET_PC
-extern bool close_requested;
-ALIGNED8 static u8 main_pool[DOUBLE_SIZE_ON_64_BIT(0x200000)];
+	extern bool close_requested;
+	ALIGNED8 static u8 main_pool[DOUBLE_SIZE_ON_64_BIT(0x200000)];
 #else
-#define close_requested false
-#if defined(BIG_RAM) && !defined(BENCH)
-ALIGNED8 static u8 main_pool[DOUBLE_SIZE_ON_64_BIT(0x200000)];
-#else
-ALIGNED8 static u8 main_pool[DOUBLE_SIZE_ON_64_BIT(0x0C0000)]; // the original size was 0x165000 (~1.4 MiB)- carefully lower it as much as possible
-#endif
+	#define close_requested false
+	#if defined(BIG_RAM) && !defined(BENCH)
+		ALIGNED8 static u8 main_pool[DOUBLE_SIZE_ON_64_BIT(0x200000)];
+	#else
+		ALIGNED8 static u8 main_pool[DOUBLE_SIZE_ON_64_BIT(0xC0000)]; // the original size was 0x165000 (~1.4 MiB)- carefully lower it as much as possible
+	#endif
 #endif
 
 [[gnu::noinline]] int main(UNUSED int argc, UNUSED char *argv[]) {

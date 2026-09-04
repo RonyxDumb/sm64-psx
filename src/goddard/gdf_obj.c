@@ -35,18 +35,18 @@ void gdf_joint_process(GdfJoint* joint) {
 		joint->latest_mtx = mtx_identity();
 		return;
 	}
-	s16 nox = joint->net_attach_offset.vx;
-	s16 noy = joint->net_attach_offset.vy;
-	s16 noz = joint->net_attach_offset.vz;
-	s16 nrx = joint->net_rotation.vx;
-	s16 nry = joint->net_rotation.vy;
-	s16 nrz = joint->net_rotation.vz;
-	s16 ox = joint->attach_offset.vx;
-	s16 oy = joint->attach_offset.vy;
-	s16 oz = joint->attach_offset.vz;
-	s16 rx = joint->rotation.vx;
-	s16 ry = joint->rotation.vy;
-	s16 rz = joint->rotation.vz;
+	s16 nox = joint->net_attach_offset.x;
+	s16 noy = joint->net_attach_offset.y;
+	s16 noz = joint->net_attach_offset.z;
+	s16 nrx = joint->net_rotation.x;
+	s16 nry = joint->net_rotation.y;
+	s16 nrz = joint->net_rotation.z;
+	s16 ox = joint->attach_offset.x;
+	s16 oy = joint->attach_offset.y;
+	s16 oz = joint->attach_offset.z;
+	s16 rx = joint->rotation.x;
+	s16 ry = joint->rotation.y;
+	s16 rz = joint->rotation.z;
 
 	ShortMatrix inverse = mtx_translationi((s16[]) {-nox, -noy, -noz});
 	ShortMatrix work = mtx_rotation_zxy((s16[]) {0, -nry, 0});

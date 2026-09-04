@@ -59,21 +59,51 @@ Gfx *geo_envfx_main(s32 callContext, struct GraphNode *node, const ShortMatrix* 
  * Geo function that generates a displaylist for the skybox. Can be assigned
  * as the function of a GraphNodeBackground.
  */
+/*
 Gfx *geo_skybox_main(s32 callContext, struct GraphNode *node, UNUSED const ShortMatrix* mtxq) {
-    Gfx *gfx = NULL;
     struct GraphNodeBackground *backgroundNode = (struct GraphNodeBackground *) node;
 
     if (callContext == GEO_CONTEXT_AREA_LOAD) {
         backgroundNode->unused = 0;
-    } else if (callContext == GEO_CONTEXT_RENDER) {
-        //struct GraphNodeCamera *camNode = (struct GraphNodeCamera *) gCurGraphNodeRoot->views[0];
-        //struct GraphNodePerspective *camFrustum = (struct GraphNodePerspective *) camNode->fnNode.node.parent;
 
-        // TODO: reimplement skybox perhaps
-        //gfx = create_skybox_facing_cameraq(0, backgroundNode->background, camFrustum->fovq,
-		//					gLakituState.posq[0], gLakituState.posq[1], gLakituState.posq[2],
-		//					gLakituState.focusq[0], gLakituState.focusq[1], gLakituState.focusq[2]);
+        skybox_preload(backgroundNode->background);
+    } else if (callContext == GEO_CONTEXT_RENDER) {
+ 
+        q32 fovq = q(90);
+
+        if (gCurGraphNodeRoot != NULL && gCurGraphNodeRoot->views[0] != NULL) {
+            struct GraphNodeCamera *camNode =
+                (struct GraphNodeCamera *) gCurGraphNodeRoot->views[0];
+            struct GraphNodePerspective *camFrustum =
+                (struct GraphNodePerspective *) camNode->fnNode.node.parent;
+
+            if (camFrustum != NULL && camFrustum->fovq > 0) {
+                fovq = camFrustum->fovq;
+            }
+        }
+
+        return create_skybox_facing_cameraq(
+            0,
+            backgroundNode->background,
+            fovq,
+            gLakituState.posq[0],
+            gLakituState.posq[1],
+            gLakituState.posq[2],
+            gLakituState.focusq[0],
+            gLakituState.focusq[1],
+            gLakituState.focusq[2]
+        );
     }
 
-    return gfx;
+    return NULL;
+}
+*/
+Gfx *geo_skybox_main(s32 callContext, struct GraphNode *node, UNUSED const ShortMatrix *mtxq) {
+    struct GraphNodeBackground *backgroundNode = (struct GraphNodeBackground *) node;
+
+    if (callContext == GEO_CONTEXT_AREA_LOAD) {
+        backgroundNode->unused = 0;
+    }
+
+    return NULL;
 }

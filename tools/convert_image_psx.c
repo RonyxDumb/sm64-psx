@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <assert.h>
 #include "endian.h"
-#include <png.h>
 #define WUFFS_IMPLEMENTATION
 #define WUFFS_CONFIG__STATIC_FUNCTIONS
 #define WUFFS_CONFIG__MODULES
@@ -97,25 +96,8 @@ int main(int argc, const char** argv) {
 		fprintf(stderr, "bit depth must be 4, 8, or 16");
 		return 1;
 	}
-	int in_w, h, channels;
-	u8* bytes = stbi_load(argv[2], &in_w, &h, &channels, 4);
-	Rgba* rgba_pixels;
-	if(channels == 2) {
-		rgba_pixels = malloc(in_w * h * sizeof(Rgba));
-		for(u32 i = 0; i < in_w * h; i++) {
-			u8 intensity = bytes[i * 2];
-			u8 alpha = bytes[i * 2 + 1];
-			rgba_pixels[i] = (Rgba) {.r = intensity, .g = intensity, .b = intensity, .a = alpha};
-		}
-		channels = 4;
-		free(bytes);
-	} else {
-		rgba_pixels = (Rgba*) bytes;
-	}
-	if(channels != 4) {
-		printf("requested 4 channels, had %d\n", channels);
-		return 1;
-	}
+	int in_w, h;
+	Rgba* rgba_pixels = (Rgba*) stbi_load(argv[2], &in_w, &h, NULL, 4);
 
 	bool has_translucency = false;
 	for(int i = 0; i < in_w * h; i++) {
@@ -218,7 +200,7 @@ int main(int argc, const char** argv) {
 		h & 0xFF, h >> 8,
 		img_rotated? 1: 0,
 		has_translucency? 1: 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	};
 
 	if(bit_depth == 16) {
@@ -231,7 +213,7 @@ int main(int argc, const char** argv) {
 		u16 unique_colors[w * h];
 		u32 unique_color_frequencies[w * h];
 		bool has_empty_pixel = false;
-		for(u32 i = 0; i < w * h; i++) {
+		for(int i = 0; i < w * h; i++) {
 			u16 color = psx_pixels[i];
 			if(color == 0) {
 				has_empty_pixel = true;
@@ -257,7 +239,7 @@ int main(int argc, const char** argv) {
 		u32 color_r_accum[unique_color_count];
 		u32 color_g_accum[unique_color_count];
 		u32 color_b_accum[unique_color_count];
-		for(int i = 0; i < unique_color_count; i++) {
+		for(u32 i = 0; i < unique_color_count; i++) {
 			u16 psx_color = unique_colors[i];
 			u32 freq = unique_color_frequencies[i];
 			color_r_accum[i] = (u32) (psx_color & 0x1F) * freq;
@@ -349,6 +331,17 @@ int main(int argc, const char** argv) {
 				u8 index1 = get_palette_mapping_of_color(psx_pixels[i + 1], unique_colors, unique_colors_to_palette, unique_color_count);
 				double_indices[i / 2] = index0 | index1 << 4;
 			}
+			// if(img_rotated) {
+			// 	u8 double_indices_rotated[w * h / 2];
+			// 	u32 i = 0;
+			// 	for(int x = 0; x < w; x++) {
+			// 		for(int y = 0; y < h / 2; y++) {
+			// 			double_indices_rotated[i] = double_indices[y * w + x];
+			// 			i++;
+			// 		}
+			// 	}
+			// 	memcpy(double_indices, double_indices_rotated, w * h / 2);
+			// }
 			FILE* out = fopen(argv[3], "wb");
 			fwrite(header, 16, 1, out);
 			fwrite(palette_colors, 16 * 2, 1, out);

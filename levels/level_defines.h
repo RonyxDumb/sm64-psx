@@ -4,12 +4,12 @@
 #define VAL_DIFF 60000
 #endif
 
-#if !(defined(NO_LEVELS) || defined(BENCH))
-#undef DEFINE_LEVEL_REMOVED
+#ifndef BENCH
+	#undef DEFINE_LEVEL_REMOVED
 #endif
 
 #ifndef DEFINE_LEVEL_REMOVED
-#define DEFINE_LEVEL_REMOVED(...) DEFINE_LEVEL(__VA_ARGS__)
+	#define DEFINE_LEVEL_REMOVED DEFINE_LEVEL
 #endif
 
 

@@ -56,14 +56,14 @@ void bhv_jrb_sliding_box_loop(void) {
         sp40[0] = sp3C->oFaceAnglePitch;
         sp40[1] = sp3C->oFaceAngleYaw;
         sp40[2] = sp3C->oFaceAngleRoll;
-        sp54q.vx = qtrunc(QFIELD(o, oParentRelativePosX));
-        sp54q.vy = qtrunc(QFIELD(o, oParentRelativePosY));
-        sp54q.vz = qtrunc(QFIELD(o, oParentRelativePosZ));
+        sp54q.x = qtrunc(QFIELD(o, oParentRelativePosX));
+        sp54q.y = qtrunc(QFIELD(o, oParentRelativePosY));
+        sp54q.z = qtrunc(QFIELD(o, oParentRelativePosZ));
         sp60q = mtx_rotation_zxy_and_translation(sp54q.elems, sp40);
         sp48q = mtx_apply_without_translation(&sp54q, &sp60q); // TODO: is this valid?
-        QSETFIELD(o, oPosX, QFIELD(sp3C, oPosX) + sp48q.vx);
-        QSETFIELD(o, oPosY, QFIELD(sp3C, oPosY) + sp48q.vy);
-        QSETFIELD(o, oPosZ, QFIELD(sp3C, oPosZ) + sp48q.vz);
+        QSETFIELD(o, oPosX, QFIELD(sp3C, oPosX) + sp48q.x);
+        QSETFIELD(o, oPosY, QFIELD(sp3C, oPosY) + sp48q.y);
+        QSETFIELD(o, oPosZ, QFIELD(sp3C, oPosZ) + sp48q.z);
         sp1E = sp3C->oFaceAnglePitch;
     }
     sp20q[0] = QFIELD(o, oPosX);

@@ -5,12 +5,12 @@
 
 q32 vec_distance_sq(const ShortVec* v0, const ShortVec* v1) {
 	gte_setDataReg(GTE_IR0, 1);
-	gte_setDataReg(GTE_IR1, v0->vx_vy);
-	gte_setDataReg(GTE_IR2, v0->vx_vy >> 16);
-	gte_loadDataRegM(GTE_IR3, (const u32*) &v0->vz);
-	gte_setDataReg(GTE_MAC1, -(s32) v1->vx);
-	gte_setDataReg(GTE_MAC2, -(s32) v1->vy);
-	gte_setDataReg(GTE_MAC3, -(s32) v1->vz);
+	gte_setDataReg(GTE_IR1, v0->xy);
+	gte_setDataReg(GTE_IR2, v0->xy >> 16);
+	gte_loadDataRegM(GTE_IR3, (const u32*) &v0->z);
+	gte_setDataReg(GTE_MAC1, -(s32) v1->x);
+	gte_setDataReg(GTE_MAC2, -(s32) v1->y);
+	gte_setDataReg(GTE_MAC3, -(s32) v1->z);
 	gte_commandNoNop(GTE_CMD_GPL);
 	gte_commandNoNop(GTE_CMD_SQR | GTE_SF);
 	return gte_getDataReg(GTE_MAC1) + gte_getDataReg(GTE_MAC2) + gte_getDataReg(GTE_MAC3);
@@ -75,9 +75,9 @@ ShortVec gfx_modelview_apply_without_translation(const ShortVec* v) {
 	gte_loadV0((const GTEVector16*) v);
 	gte_commandAfterLoad(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT);
 	return (ShortVec) {
-		.vx = gte_getDataReg(GTE_IR1),
-		.vy = gte_getDataReg(GTE_IR2),
-		.vz = gte_getDataReg(GTE_IR3)
+		.x = gte_getDataReg(GTE_IR1),
+		.y = gte_getDataReg(GTE_IR2),
+		.z = gte_getDataReg(GTE_IR3),
 	};
 }
 
@@ -85,9 +85,9 @@ ShortVec gfx_modelview_apply(const ShortVec* v) {
 	gte_loadV0((const GTEVector16*) v);
 	gte_commandAfterLoad(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_TR);
 	return (ShortVec) {
-		.vx = gte_getDataReg(GTE_IR1),
-		.vy = gte_getDataReg(GTE_IR2),
-		.vz = gte_getDataReg(GTE_IR3)
+		.x = gte_getDataReg(GTE_IR1),
+		.y = gte_getDataReg(GTE_IR2),
+		.z = gte_getDataReg(GTE_IR3),
 	};
 }
 
