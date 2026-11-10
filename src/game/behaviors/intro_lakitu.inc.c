@@ -81,9 +81,18 @@ void bhv_intro_lakitu_loop(void) {
             if (gCutsceneTimer > 52)
                 cur_obj_play_sound_1(SOUND_AIR_LAKITU_FLY_HIGHPRIO);
 
-            if (intro_lakitu_set_pos_and_focus(gCurrentObject, gIntroLakituStartToPipeOffsetFromCamera,
-                                               gIntroLakituStartToPipeFocus) == 1)
-                gCurrentObject->oAction += 1;
+            /* Fixed-point spline completion can miss the exact final value.
+             * Let Lakitu progress to the pipe/dialog on the original cutscene
+             * timeline even if the final spline result is never reported. */
+            s32 lakituSplineFinished =
+                intro_lakitu_set_pos_and_focus(gCurrentObject, gIntroLakituStartToPipeOffsetFromCamera,
+                                               gIntroLakituStartToPipeFocus);
+#ifdef VERSION_EU
+            if (lakituSplineFinished == 1 || gCutsceneTimer > 590)
+#else
+            if (lakituSplineFinished == 1 || gCutsceneTimer > 710)
+#endif
+                gCurrentObject->oAction = 2;
 
             switch (gCurrentObject->oTimer) {
 #if defined(VERSION_US) || defined(VERSION_SH)
