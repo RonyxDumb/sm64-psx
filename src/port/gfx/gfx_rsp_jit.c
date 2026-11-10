@@ -1,4 +1,5 @@
 #include "port/gfx/gfx.h"
+#include "port/gfx/gfx_light_color.h"
 #include <PR/gbi.h>
 #include <port/gfx/gfx_internal.h>
 #include <port/psx/scratchpad_call.h>
@@ -255,7 +256,7 @@ static int max3(int x, int y, int z) {
 						const Light_t* n64light = (const Light_t*) segmented_to_virtual((void*) cmd->words.w1);
 						switch(num_lights - 1 - (index - G_MV_L0) / 2) {
 							case 0: {
-								*(out++) = DL_PACK_OP(DL_CMD_LIGHT_AMBIENT) | (u32) n64light->col[2] << 16 | (u32) n64light->col[1] << 8 | (u32) n64light->col[0];
+								*(out++) = DL_PACK_OP(DL_CMD_LIGHT_AMBIENT) | gfx_light_encode_ambient((u32) n64light->col[2] << 16 | (u32) n64light->col[1] << 8 | (u32) n64light->col[0]);
 								break;
 							}
 							case 1: {
