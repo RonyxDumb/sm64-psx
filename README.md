@@ -1,4 +1,4 @@
-> # Migrated to https://codeberg.org/malucart/sm64-psx! Go there instead!
+> **Progetto originale:** lo sviluppo upstream di SM64-PSX è stato spostato su [Codeberg](https://codeberg.org/malucart/sm64-psx). **Questo repository GitHub è un fork indipendente** con correzioni aggiuntive. [Confronto dei 10 commit successivi alla migrazione](docs/CODEBERG_UPSTREAM_AUDIT_2026-11.md).
 
 # Super Mario 64 (DualShock Version)
 
