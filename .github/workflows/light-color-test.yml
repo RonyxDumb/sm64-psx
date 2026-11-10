@@ -1,0 +1,31 @@
+name: RGB555 lighting tests
+
+on:
+  push:
+    paths:
+      - "Makefile"
+      - "src/port/gfx/gfx_light_color.h"
+      - "src/port/gfx/gfx_global_dl.c"
+      - "src/port/gfx/gfx_rsp_jit.c"
+      - "src/port/psx/gfx_dl_exec_psx.c"
+      - "src/port/pc/gfx_dl_exec_pc.c"
+      - "tests/light_rgb555_test.c"
+      - ".github/workflows/light-color-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  conversion:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rgb555: [0, 1]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile conversion tests
+        run: cc -std=c11 -Wall -Wextra -Werror -I. -DPSX_LIGHTS_RGB555=${{ matrix.rgb555 }} tests/light_rgb555_test.c -o /tmp/light_rgb555_test
+      - name: Run conversion tests
+        run: /tmp/light_rgb555_test
