@@ -119,6 +119,8 @@ void gfx_emit_light_directional1(Light_t* light) {
 bool compile_as_ortho = false;
 
 void gfx_emit_screen_quad(s16 x0, s16 y0, s16 x1, s16 y1) {
+	/* Restore the caller's projection state after drawing the quad. */
+	bool restore_ortho = !compile_as_ortho;
 	VtxList* list = gfx_alloc_in_global_dl(4 + sizeof(GfxVtx) * 4);
 	// not setting the tag, it won't be checked
 	list->psx[0].x = x0;
@@ -145,11 +147,11 @@ void gfx_emit_screen_quad(s16 x0, s16 y0, s16 x1, s16 y1) {
 		flags |= PRIM_FLAG_TEXTURED;
 	}
 	*(global_dl++) = DL_PACK_OP(DL_CMD_VTX) | DL_PACK_PTR(list->psx);
-	if(!compile_as_ortho) {
+	if(restore_ortho) {
 		gfx_emit_set_ortho(true);
 	}
 	gfx_emit_quad(0, 1, 2, 3, flags);
-	if(!compile_as_ortho) {
+	if(restore_ortho) {
 		gfx_emit_set_ortho(false);
 	}
 }
