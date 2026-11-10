@@ -258,7 +258,6 @@ static u16 note_freq_scales[128] = {
 #define SFX_LAST_VOICE  23
 #define MAX_ACTIVE_SFX  12
 #define MAX_SFX_LAYERS  4
-#define MAX_SOUND_CHANNELS 16
 #define NO_SFX_VOICE 0xFF
 
 #define SFX_SEQUENCE_HZ 240
@@ -422,8 +421,6 @@ typedef struct {
 static ActiveSfx active_sfx[MAX_ACTIVE_SFX] = {};
 static SfxVoiceState sfx_voice_state[24] = {};
 static u32 sfx_voice_age_clock = 1;
-static bool last_non_discrete_voice_valid[MAX_SOUND_CHANNELS] = {};
-static u8 last_non_discrete_voice[MAX_SOUND_CHANNELS] = {};
 
 static void key_off_voice_hw(u32 voice) {
 	if(voice < 16) {
@@ -789,11 +786,6 @@ static void dispatch_sfx_layer(u8 instance_idx, u8 layer_idx) {
 		v->owner_layer = layer_idx;
 		start_event_on_voice(layer->voice, event, instance->no_echo);
 
-		if(!instance->discrete && instance->channel_id < MAX_SOUND_CHANNELS && layer_idx == 0) {
-			last_non_discrete_voice_valid[instance->channel_id] = true;
-			last_non_discrete_voice[instance->channel_id] = layer->voice;
-		}
-
 		layer->event_index++;
 	}
 }
@@ -838,23 +830,11 @@ void play_sound(s32 soundBits, UNUSED f32* pos) {
 
 	bool discrete = (soundBits & SOUND_DISCRETE) != 0;
 	bool no_echo = (soundBits & SOUND_NO_ECHO) != 0;
-	if(!discrete) {
-		if(same_sfx_is_active(channel_id, sfx_id)) {
-			return;
-		}
-
-		if(channel_id < MAX_SOUND_CHANNELS && last_non_discrete_voice_valid[channel_id]) {
-			u8 voice = last_non_discrete_voice[channel_id];
-			const SfxLayerDef* first_layer = &sfx_blob_layers[sfx_def->first_layer];
-			if(voice >= SFX_FIRST_VOICE && voice <= SFX_LAST_VOICE &&
-			   first_layer->event_count != 0) {
-				const SfxEvent* first_event = &sfx_blob_events[first_layer->first_event];
-				SampleDef first_sample = find_instrument(first_event->bank_id, first_event->sample_id);
-				if(is_voice_playing(voice) && SPU_CH_ADDR(voice) == first_sample.spu_addr) {
-					return;
-				}
-			}
-		}
+	/* Suppress only an already-active instance of the same non-discrete SFX.
+	 * Different SFX can share a sample address; using the SPU address as a
+	 * duplicate key incorrectly silences jingles and other one-shot sounds. */
+	if(!discrete && same_sfx_is_active(channel_id, sfx_id)) {
+		return;
 	}
 
 	ActiveSfx* instance = alloc_sfx_instance();
