@@ -5,6 +5,7 @@ on:
     paths:
       - "Makefile"
       - "src/port/gfx/gfx_light_color.h"
+      - "src/port/gfx/gfx_internal.h"
       - "src/port/gfx/gfx_global_dl.c"
       - "src/port/gfx/gfx_rsp_jit.c"
       - "src/port/psx/gfx_dl_exec_psx.c"
