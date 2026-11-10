@@ -216,7 +216,8 @@ void create_dl_translation_matrix(s8 pushOp, f32 x, f32 y, f32 z) {
 
 void create_dl_rotation_matrix(s8 pushOp, f32 a, f32 x, f32 y, f32 z) {
     ShortMatrix* mtx = gfx_alloc_in_global_dl(sizeof(ShortMatrix));
-    s16 aq = a; // TODO: fix the math?
+    /* N64 menu angles are degrees; the native fixed-point matrix uses 16-bit turns. */
+    s16 aq = (s16) (a * (65536.0f / 360.0f));
     *mtx = mtx_rotation_xyz((s16[]) {x == 1? aq: 0, y == 1? aq: 0, z == 1? aq: 0});
     if(pushOp == MENU_MTX_PUSH) {
         gfx_emit_mtx_push();
@@ -234,7 +235,14 @@ void create_dl_scale_matrix(s8 pushOp, f32 x, f32 y, f32 z) {
 }
 
 void create_dl_ortho_matrix(void) {
-    create_dl_identity_matrix();
+    /* N64 dialog geometry uses a bottom-left origin. PS1 screen space has a
+     * top-left origin, so flip Y for modelview-transformed UI geometry. */
+    ShortMatrix* mtx = gfx_alloc_in_global_dl(sizeof(ShortMatrix));
+    *mtx = mtx_identity();
+    mtx->m[1][1] = -ONE;
+    mtx->t[1] = SCREEN_HEIGHT;
+    gfx_emit_mtx_set(mtx);
+    gfx_emit_set_ortho(true);
 }
 #endif
 
@@ -294,6 +302,10 @@ void render_generic_char(u8 c) {
     gDPSetTextureImage(gDisplayListHead++, G_IM_FMT_IA, G_IM_SIZ_16b, 1, VIRTUAL_TO_PHYSICAL(packedTexture));
 #else
     gfx_emit_tex(packedTexture);
+    /* PS1: loading a glyph texture is not enough: emit its quad as well.
+     * The native UI matrix handles the dialog opening animation and layout.
+     * Y goes from 16 to 0 because its modelview is flipped to PS1 space. */
+    gfx_emit_screen_quad(0, 16, 8, 0);
 #endif
 #endif
 #ifdef RSP_DL
@@ -2129,6 +2141,7 @@ void do_cutscene_handler(void) {
     gSPDisplayList(gDisplayListHead++, dl_ia_text_end);
 #else
     gfx_emit_env_color_alpha_full(0xFFFFFF);
+    gfx_emit_set_ortho(false);
 #endif
 
     // if the timing variable is less than 5, increment
@@ -3536,11 +3549,17 @@ s16 render_menus_and_dialogs(void) {
         // The Peach "Dear Mario" message needs to be repositioned separately
         if (gDialogID == DIALOG_020) {
             print_peach_letter_message();
+#ifndef RSP_DL
+            gfx_emit_set_ortho(false);
+#endif
             return index;
         }
 
         render_dialog_entries();
         gDialogColorFadeTimer = (s16) gDialogColorFadeTimer + 0x1000;
     }
+#ifndef RSP_DL
+    gfx_emit_set_ortho(false);
+#endif
     return index;
 }
