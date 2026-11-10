@@ -11,22 +11,63 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Fetch Codeberg and list changes since GitHub migration
+      - name: Checkout GitHub fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch Codeberg and analyze which fixes are missing
         shell: bash
         run: |
           set -euo pipefail
-          echo 'Fetching original SM64-PSX from Codeberg...'
           git clone --quiet --filter=blob:none --no-checkout https://codeberg.org/malucart/sm64-psx.git /tmp/sm64-codeberg
           git -C /tmp/sm64-codeberg remote add github-archive https://github.com/malucard/sm64-psx.git
           git -C /tmp/sm64-codeberg fetch --quiet github-archive master
           BASE=$(git -C /tmp/sm64-codeberg merge-base HEAD FETCH_HEAD)
-          HEAD=$(git -C /tmp/sm64-codeberg rev-parse HEAD)
-          echo "CODEBERG_BASE=$BASE"
-          echo "CODEBERG_HEAD=$HEAD"
-          echo "NEW_COMMIT_COUNT=$(git -C /tmp/sm64-codeberg rev-list --count "$BASE..$HEAD")"
-          echo "===== ALL UPSTREAM COMMITS AFTER COMMON ANCESTOR ====="
-          git -C /tmp/sm64-codeberg log --reverse --format='%h %aI %s' "$BASE..$HEAD"
-          echo "===== UPSTREAM FILE CHANGE STATS ====="
-          git -C /tmp/sm64-codeberg diff --numstat "$BASE" "$HEAD"
-          echo "===== PATHS PER COMMIT ====="
-          git -C /tmp/sm64-codeberg log --reverse --format='COMMIT %H %s' --name-status "$BASE..$HEAD"
+          export BASE
+          python3 - <<'PY'
+          import os,subprocess,collections
+          cb='/tmp/sm64-codeberg'
+          def run(root,*args):
+              return subprocess.check_output(['git','-C',root,*args],text=True).strip()
+          base=os.environ['BASE']
+          cb_head=run(cb,'rev-parse','HEAD')
+          fork_head=run('.','rev-parse','HEAD')
+          print('CODEBERG_BASE',base,flush=True)
+          print('CODEBERG_HEAD',cb_head,flush=True)
+          print('FORK_HEAD',fork_head,flush=True)
+          def manifest(root,rev):
+              out=run(root,'ls-tree','-r',rev)
+              return {t[3]:t[2] for x in out.splitlines() if (t:=x.split(None,3)) and len(t)==4}
+          before=manifest(cb,base)
+          after=manifest(cb,cb_head)
+          own=manifest('.',fork_head)
+          changed=sorted(p for p in set(before)|set(after) if before.get(p)!=after.get(p))
+          groups=collections.defaultdict(list)
+          for path in changed:
+              was=before.get(path)
+              now=after.get(path)
+              ours=own.get(path)
+              if ours==now:
+                  group='ALREADY_EQUAL_TO_CODEBERG'
+              elif ours==was:
+                  group='SAFE_TO_COPY_UPSTREAM'
+              elif not now:
+                  group='UPSTREAM_REMOVED_FORK_CHANGED'
+              elif not ours:
+                  group='NEW_UPSTREAM_OR_REMOVED_FORK'
+              else:
+                  group='FORK_DIVERGED_NEEDS_MANUAL_MERGE'
+              groups[group].append(path)
+          for group in ['ALREADY_EQUAL_TO_CODEBERG','SAFE_TO_COPY_UPSTREAM','UPSTREAM_REMOVED_FORK_CHANGED','NEW_UPSTREAM_OR_REMOVED_FORK','FORK_DIVERGED_NEEDS_MANUAL_MERGE']:
+              print(f'===== {group} ({len(groups[group])}) =====',flush=True)
+              for p in groups[group]:
+                  print(p,flush=True)
+          print('===== DIVERGED FILE DIFF STAT (FORK -> CODEBERG) =====',flush=True)
+          for p in groups['FORK_DIVERGED_NEEDS_MANUAL_MERGE']:
+              try:
+                  a=subprocess.run(['git','show',f'HEAD:{p}'],capture_output=True).stdout
+                  b=subprocess.run(['git','-C',cb,'show',f'HEAD:{p}'],capture_output=True).stdout
+                  print(f'{p}: fork_bytes={len(a)} codeberg_bytes={len(b)}',flush=True)
+              except Exception as e:
+                  print('ERROR',p,e,flush=True)
+          PY
