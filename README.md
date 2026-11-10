@@ -56,7 +56,9 @@ Open the `.cue` file from the extracted artifact in DuckStation or PCSX-Redux.
 
 **Required one-time setup:** GitHub runners cannot access an N64 ROM stored in
 a local folder or the ChatGPT Library. Add an Actions repository secret named
-`SM64_US_ROM_URL` under **Settings → Secrets and variables → Actions**.
+`SM64_US_ROM_URL` under **Settings → Secrets and variables → Actions**. An
+existing Google Drive sharing link is supported via `gdown`; you can also
+reuse the previous secret name `SM64_ROM_DRIVE_URL` in this repository.
 It must contain a private, directly downloadable URL for *your own* unmodified
 US Super Mario 64 `baserom.us.z64`. If authentication requires a header,
 optionally define `SM64_US_ROM_AUTH_HEADER` (for example
