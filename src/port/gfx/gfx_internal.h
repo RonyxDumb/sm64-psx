@@ -88,7 +88,8 @@ typedef union {
 		GfxVtx psx[];
 	};
 	struct {
-		Vtx n64[];
+		/* Zero-length GNU array: a flexible array is invalid as the sole struct member. */
+		Vtx n64[0];
 	};
 } VtxList;
 
