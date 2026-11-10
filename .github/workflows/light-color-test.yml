@@ -1,17 +1,8 @@
-name: RGB555 lighting tests
+name: SM64-PSX emulator builds and RGB555 checks
 
 on:
   push:
-    paths:
-      - "Makefile"
-      - "src/port/gfx/gfx_light_color.h"
-      - "src/port/gfx/gfx_internal.h"
-      - "src/port/gfx/gfx_global_dl.c"
-      - "src/port/gfx/gfx_rsp_jit.c"
-      - "src/port/psx/gfx_dl_exec_psx.c"
-      - "src/port/pc/gfx_dl_exec_pc.c"
-      - "tests/light_rgb555_test.c"
-      - ".github/workflows/light-color-test.yml"
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -53,3 +44,94 @@ jobs:
               src/port/gfx/gfx_rsp_jit.c \
               src/port/psx/gfx_dl_exec_psx.c
           done
+
+  build-playstation-disc:
+    name: "Build PS1 ISO (LIGHTS_15BIT=${{ matrix.rgb555 }})"
+    needs: [conversion, syntax-psx]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        rgb555: [0, 1]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Retrieve and verify owned US N64 source ROM
+        shell: bash
+        env:
+          ROM_URL: ${{ secrets.SM64_US_ROM_URL }}
+          ROM_AUTH_HEADER: ${{ secrets.SM64_US_ROM_AUTH_HEADER }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$ROM_URL" ]]; then
+            echo "::error title=ROM not configured::GitHub Actions cannot read the ROM in your ChatGPT Library. Configure repository secret SM64_US_ROM_URL with a private direct-download URL to your own baserom.us.z64."
+            exit 1
+          fi
+          if [[ -n "$ROM_AUTH_HEADER" ]]; then
+            curl --fail --location --show-error --silent --retry 3 --connect-timeout 20 \
+              --header "$ROM_AUTH_HEADER" --output baserom.us.z64 "$ROM_URL"
+          else
+            curl --fail --location --show-error --silent --retry 3 --connect-timeout 20 \
+              --output baserom.us.z64 "$ROM_URL"
+          fi
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          rom = Path("baserom.us.z64")
+          data = rom.read_bytes()
+          expected_sha1 = "9bef1128717f958171a4afac3ed78ee2bb4e86ce"
+          if len(data) != 8 * 1024 * 1024:
+              raise SystemExit("Invalid US ROM size: expected 8 MiB")
+          if data[:4] != bytes.fromhex("80371240"):
+              raise SystemExit("Not a big-endian .z64 file (invalid header)")
+          actual_sha1 = hashlib.sha1(data).hexdigest()
+          if actual_sha1 != expected_sha1:
+              raise SystemExit("ROM SHA-1 mismatch: expected US SM64 ROM; do not use other revisions")
+          print("Source ROM validated (US, 8 MiB, correct SHA-1)")
+          PY
+
+      - name: Build PlayStation toolchain container
+        shell: bash
+        run: docker build --pull --tag sm64-psx-ci:latest .
+
+      - name: Compile PlayStation ISO
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --volume "${{ github.workspace }}:/project" \
+            --workdir /project \
+            sm64-psx-ci:latest \
+            sh -ec "make VERSION=us LIGHTS_15BIT=${{ matrix.rgb555 }} COLOR=0"
+
+      - name: Check emulator-ready disc files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s build/us_psx/sm64.iso
+          test -s build/us_psx/sm64.cue
+          grep -qi 'sm64.iso' build/us_psx/sm64.cue || \
+            echo "::warning::Check the CUE file's track filename before opening it in the emulator"
+          (cd build/us_psx && sha256sum sm64.iso sm64.cue > SHA256SUMS)
+          ls -lh build/us_psx/sm64.iso build/us_psx/sm64.cue
+
+      - name: Remove copyrighted source ROM from build workspace
+        if: always()
+        shell: bash
+        run: rm -f baserom.us.z64
+
+      - name: Attach PlayStation image for emulator testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: "sm64-psx-us-rgb${{ matrix.rgb555 == 1 && '555' || '888' }}"
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+          path: |
+            build/us_psx/sm64.iso
+            build/us_psx/sm64.cue
+            build/us_psx/sm64.elf
+            build/us_psx/SHA256SUMS
