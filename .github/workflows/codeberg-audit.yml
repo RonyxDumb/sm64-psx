@@ -1,0 +1,32 @@
+name: One-time Codeberg upstream audit
+on:
+  push:
+    paths:
+      - '.github/workflows/codeberg-audit.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Fetch Codeberg and list changes since GitHub migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Fetching original SM64-PSX from Codeberg...'
+          git clone --quiet --filter=blob:none --no-checkout https://codeberg.org/malucart/sm64-psx.git /tmp/sm64-codeberg
+          git -C /tmp/sm64-codeberg remote add github-archive https://github.com/malucard/sm64-psx.git
+          git -C /tmp/sm64-codeberg fetch --quiet github-archive master
+          BASE=$(git -C /tmp/sm64-codeberg merge-base HEAD FETCH_HEAD)
+          HEAD=$(git -C /tmp/sm64-codeberg rev-parse HEAD)
+          echo "CODEBERG_BASE=$BASE"
+          echo "CODEBERG_HEAD=$HEAD"
+          echo "NEW_COMMIT_COUNT=$(git -C /tmp/sm64-codeberg rev-list --count "$BASE..$HEAD")"
+          echo "===== ALL UPSTREAM COMMITS AFTER COMMON ANCESTOR ====="
+          git -C /tmp/sm64-codeberg log --reverse --format='%h %aI %s' "$BASE..$HEAD"
+          echo "===== UPSTREAM FILE CHANGE STATS ====="
+          git -C /tmp/sm64-codeberg diff --numstat "$BASE" "$HEAD"
+          echo "===== PATHS PER COMMIT ====="
+          git -C /tmp/sm64-codeberg log --reverse --format='COMMIT %H %s' --name-status "$BASE..$HEAD"
