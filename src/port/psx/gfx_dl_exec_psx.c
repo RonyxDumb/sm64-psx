@@ -2,6 +2,7 @@
 #include "types.h"
 #include <assert.h>
 #include <port/gfx/gfx.h>
+#include <port/gfx/gfx_light_color.h>
 #include <ps1/registers.h>
 #include <port/gfx/gfx_internal.h>
 #include <ps1/gpucmd.h>
@@ -389,7 +390,8 @@ DL_EXEC_ICACHE_FUNC static void set_light_n64(Light_t* n64light, u32 light_idx) 
 	gte_setDataReg(GTE_VZ0, (s32) normals << 8 >> 24);
 	gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_NONE);
 
-	u32 rgb = *(u32*) n64light->col;
+	/* Native Light_t layout is always RGB888; quantize only at consumption. */
+	u32 rgb = gfx_light_quantize_directional((u32) n64light->col[0] | (u32) n64light->col[1] << 8 | (u32) n64light->col[2] << 16);
 	u32 r = rgb << 4 & 0xFF0;
 	u32 g = rgb >> 4 & 0xFF0;
 	u32 b = rgb >> 12 & 0xFF0;
@@ -633,9 +635,10 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 				break;
 			}
 			case DL_CMD_LIGHT_AMBIENT: {
-				gte_setControlReg(GTE_RBK, (cmd & 0xFF) * (ONE / 256));
-				gte_setControlReg(GTE_GBK, (cmd >> 8 & 0xFF) * (ONE / 256));
-				gte_setControlReg(GTE_BBK, (cmd >> 16 /*& 0xFF*/) * (ONE / 256));
+				u32 rgb = gfx_light_decode_ambient(cmd);
+				gte_setControlReg(GTE_RBK, (rgb & 0xFF) * (ONE / 256));
+				gte_setControlReg(GTE_GBK, (rgb >> 8 & 0xFF) * (ONE / 256));
+				gte_setControlReg(GTE_BBK, (rgb >> 16 & 0xFF) * (ONE / 256));
 				break;
 			}
 			case DL_CMD_LIGHT_DIRECTIONAL0:
