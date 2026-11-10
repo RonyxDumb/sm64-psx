@@ -1,4 +1,5 @@
 #include "gfx_internal.h"
+#include "gfx_light_color.h"
 #include "port/gfx/gfx.h"
 #include <port/psx/scratchpad_call.h>
 #include <game/game_init.h>
@@ -102,7 +103,7 @@ void gfx_emit_env_color_alpha_0(u32 color) {
 }
 
 void gfx_emit_light_ambient(u32 color) {
-	*(global_dl++) = DL_PACK_OP(DL_CMD_LIGHT_AMBIENT) | (color & 0xFFFFFF);
+	*(global_dl++) = DL_PACK_OP(DL_CMD_LIGHT_AMBIENT) | gfx_light_encode_ambient(color);
 	assert((uintptr_t) global_dl_right > (uintptr_t) global_dl);
 }
 
