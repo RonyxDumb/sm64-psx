@@ -44,6 +44,31 @@ An original copy of the game is required to extract the assets.
 - Title screen is unfinished
 - Pause menu doesn't work
 
+### GitHub Actions: build images for the PlayStation emulator
+
+The workflow [SM64-PSX emulator builds and RGB555 checks](.github/workflows/light-color-test.yml)
+runs on every push to `main` and on manual dispatch. It runs conversion and
+MIPS syntax checks, then builds **two PS1 disc images** using the repository's
+Dockerfile: RGB888 (default lighting) and RGB555 (`LIGHTS_15BIT=1`).
+Each successful build uploads `sm64.iso`, `sm64.cue`, the optional ELF
+debug image and SHA-256 checksums as an Actions artifact (retained for 3 days).
+Open the `.cue` file from the extracted artifact in DuckStation or PCSX-Redux.
+
+**Required one-time setup:** GitHub runners cannot access an N64 ROM stored in
+a local folder or the ChatGPT Library. Add an Actions repository secret named
+`SM64_US_ROM_URL` under **Settings → Secrets and variables → Actions**.
+It must contain a private, directly downloadable URL for *your own* unmodified
+US Super Mario 64 `baserom.us.z64`. If authentication requires a header,
+optionally define `SM64_US_ROM_AUTH_HEADER` (for example
+`Authorization: Bearer <token>`). The workflow validates the file size,
+big-endian header and expected US SHA-1 before building. It will **fail
+explicitly** if this prerequisite is missing, rather than reporting a false
+green build. The source N64 ROM is not committed or uploaded as an artifact.
+
+**Copyright:** the generated PS1 ISO contains game assets. On a public
+repository, GitHub Actions artifacts may also be publicly accessible.
+Only generate/distribute the image where you have the necessary rights.
+
 ### Optional 15-bit lighting (RGB555)
 
 Set `LIGHTS_15BIT=1` to quantize ambient and directional light colors to 5 bits
