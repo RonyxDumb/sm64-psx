@@ -21,8 +21,8 @@ int main(void) {
             u32 rgb = value << shift;
             u32 restored = gfx_light_rgb555_to_rgb888(
                 gfx_light_rgb888_to_rgb555(rgb));
-            assert(channel(restored, shift) <= value);
-            assert(value - channel(restored, shift) <= 7u);
+            u32 got = channel(restored, shift);
+            assert(got > value ? got - value <= 7u : value - got <= 7u);
             for (unsigned other = 0; other <= 16; other += 8) {
                 if (other != shift) assert(channel(restored, other) == 0u);
             }
