@@ -44,6 +44,26 @@ An original copy of the game is required to extract the assets.
 - Title screen is unfinished
 - Pause menu doesn't work
 
+### Optional 15-bit lighting (RGB555)
+
+Set `LIGHTS_15BIT=1` to quantize ambient and directional light colors to 5 bits
+per RGB channel. The PS1 GTE renderer and the PC reference renderer use the
+same RGB555 conversion, and RGB888 remains the default (`LIGHTS_15BIT=0`).
+
+```sh
+make LIGHTS_15BIT=1
+# For PC debugging:
+make PC=1 LIGHTS_15BIT=1
+```
+
+The original N64 `Light_t` and `Ambient_t` layouts are **not** changed: this
+avoids corrupting light data and pointers from generated assets. Consequently
+this optional mode reduces color precision, **not** the size of light assets in
+RAM/ROM. The color conversion has host-side regression tests in
+`tests/light_rgb555_test.c`. Full game and hardware rendering still require
+in-game testing. Run `make clean` before switching modes if reusing an older
+build directory.
+
 ## Building
 
 1. Place a *Super Mario 64* ROM named exactly `baserom.us.z64` into the repository's root directory. For now, only US ROMs are supported.
