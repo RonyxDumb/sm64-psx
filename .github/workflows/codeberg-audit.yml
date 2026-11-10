@@ -62,6 +62,24 @@ jobs:
               print(f'===== {group} ({len(groups[group])}) =====',flush=True)
               for p in groups[group]:
                   print(p,flush=True)
+          print('===== FOCUSED CODE DIFFS (CODEBERG -> FORK) =====',flush=True)
+          import difflib
+          focus=[
+              'Makefile.pc.mk','Makefile.psx.mk','src/game/skybox.c',
+              'src/goddard/gdf_obj.c','src/port/gfx/gfx.h',
+              'src/port/gfx/gfx_global_dl.c','src/port/gfx/gfx_rsp_jit.c',
+              'src/port/pc/gfx_dl_exec_pc.c','src/port/psx/cd_psx.c',
+              'src/port/psx/gfx_dl_exec_psx.c','tools/Makefile',
+              'tools/preprocess_graphics.py'
+          ]
+          for p in focus:
+              left=subprocess.check_output(['git','-C',cb,'show',f'HEAD:{p}']).decode('utf8','replace')
+              right=subprocess.check_output(['git','show',f'HEAD:{p}']).decode('utf8','replace')
+              lines=list(difflib.unified_diff(left.splitlines(),right.splitlines(),
+                  fromfile='codeberg/'+p,tofile='fork/'+p,lineterm='',n=3))
+              print(f'===== DIFF {p} (total_lines={len(lines)}) =====',flush=True)
+              for line in lines[:145]:print(line,flush=True)
+              if len(lines)>145:print(f'... {len(lines)-145} more lines',flush=True)
           print('===== DIVERGED FILE DIFF STAT (FORK -> CODEBERG) =====',flush=True)
           for p in groups['FORK_DIVERGED_NEEDS_MANUAL_MERGE']:
               try:
