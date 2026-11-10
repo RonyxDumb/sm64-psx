@@ -28,9 +28,11 @@ void bhv_camera_lakitu_init(void) {
 static void camera_lakitu_intro_act_trigger_cutscene(void) {
     //! These bounds are slightly smaller than the actual bridge bounds, allowing
     //  the RTA speedrunning method of lakitu skip
-    if (QFIELD(gMarioObject, oPosX) > q(-544.0f) && QFIELD(gMarioObject, oPosX) < q(545.0f) && QFIELD(gMarioObject, oPosY) > q(800.0f)
-        && QFIELD(gMarioObject, oPosZ) > q(-2000.0f) && QFIELD(gMarioObject, oPosZ) < q(-177.0f)
-        && QFIELD(gMarioObject, oPosZ) < q(-177.0f)) // always double check your conditions
+    /* The bridge floor is near Y=800. Leave a small margin for the PS1
+     * fixed-point collision/position rounding rather than skipping the trigger. */
+    if (QFIELD(gMarioObject, oPosX) > q(-544.0f) && QFIELD(gMarioObject, oPosX) < q(545.0f)
+        && QFIELD(gMarioObject, oPosY) >= q(760.0f)
+        && QFIELD(gMarioObject, oPosZ) > q(-2000.0f) && QFIELD(gMarioObject, oPosZ) < q(-177.0f))
     {
         if (set_mario_npc_dialog(MARIO_DIALOG_LOOK_UP) == MARIO_DIALOG_STATUS_START) {
             o->oAction = CAMERA_LAKITU_INTRO_ACT_SPAWN_CLOUD;
@@ -69,6 +71,12 @@ static void camera_lakitu_intro_act_show_dialog(void) {
 #endif
 
     cur_obj_play_sound_1(SOUND_AIR_LAKITU_FLY);
+
+    /* Don't leave Mario waiting indefinitely if fixed-point turning or
+     * movement never satisfies Lakitu's original exact stop condition. */
+    if (!o->oCameraLakituFinishedDialog && o->oTimer > 240 && QFIELD(o, oCameraLakituSpeed) != 0) {
+        FSETFIELD(o, oCameraLakituSpeed, 0.0f);
+    }
 
     // Face toward mario
     o->oFaceAnglePitch = obj_turn_pitch_toward_mario(120.0f, 0);
@@ -114,7 +122,8 @@ static void camera_lakitu_intro_act_show_dialog(void) {
                     // Once within 1000 units, slow down
                     APPROACH_F32_FIELD(o, oCameraLakituSpeed, 20.0f, 1.0f);
                     if (QFIELD(o, oDistanceToMario) < q(500.0)
-                        && abs_angle_diff(gMarioObject->oFaceAngleYaw, o->oFaceAngleYaw) > 0x7000) {
+                        && (abs_angle_diff(gMarioObject->oFaceAngleYaw, o->oFaceAngleYaw) > 0x7000
+                            || o->oTimer > 120)) {
                         // Once within 500 units and facing toward mario, come
                         // to a stop
                         APPROACH_F32_FIELD(o, oCameraLakituSpeed, 0.0f, 5.0f);
