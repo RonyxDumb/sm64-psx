@@ -78,6 +78,14 @@ ifeq ($(MARIO_HEAD),1)
 	DEFINES += MARIO_HEAD=1
 endif
 
+# Optional 15-bit RGB lighting. Retain the native N64 light asset layout.
+# Default is RGB888; use "make LIGHTS_15BIT=1" to opt into RGB555.
+LIGHTS_15BIT ?= 0
+$(eval $(call validate-option,LIGHTS_15BIT,0 1))
+ifeq ($(LIGHTS_15BIT),1)
+    DEFINES += PSX_LIGHTS_RGB555=1
+endif
+
 DEFINES += F3D_OLD=1 NON_MATCHING=1 AVOID_UB=1 NO_AUDIO=1
 
 # Whether to hide commands or not
