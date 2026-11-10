@@ -29,3 +29,23 @@ jobs:
         run: cc -std=c11 -Wall -Wextra -Werror -I. -DPSX_LIGHTS_RGB555=${{ matrix.rgb555 }} tests/light_rgb555_test.c -o /tmp/light_rgb555_test
       - name: Run conversion tests
         run: /tmp/light_rgb555_test
+  syntax-psx:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rgb555: [0, 1]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse changed PS1 renderer units for MIPS (no ROM required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          clang -target mipsel-none-elf -std=gnu2x -fsyntax-only \
+            -DTARGET_PSX=1 -DVERSION_US=1 -DF3D_OLD=1 -DNON_MATCHING=1 -DAVOID_UB=1 \
+            -DNO_AUDIO=1 -DPSX_LIGHTS_RGB555=${{ matrix.rgb555 }} \
+            -D_LANGUAGE_C -include include/stdbool.h \
+            -Iinclude -Isrc -I. -Iinclude/libc -Ips1 -Ips1-bare-metal -Ips1-bare-metal/libc \
+            src/port/gfx/gfx_global_dl.c \
+            src/port/gfx/gfx_rsp_jit.c \
+            src/port/psx/gfx_dl_exec_psx.c
