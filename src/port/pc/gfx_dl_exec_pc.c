@@ -1,5 +1,6 @@
 #include "engine/graph_node.h"
 #include "port/gfx/gfx.h"
+#include "port/gfx/gfx_light_color.h"
 #include <types.h>
 #include <port/gfx/gfx_internal.h>
 #include <SDL3/SDL.h>
@@ -290,9 +291,10 @@ void gfx_run_compiled_dl(dl_t* dl) {
 				break;
 			}
 			case DL_CMD_LIGHT_AMBIENT: {
-				ambient_color.r = cmd & 0xFF;
-				ambient_color.g = cmd >> 8 & 0xFF;
-				ambient_color.b = cmd >> 16 & 0xFF;
+				u32 rgb = gfx_light_decode_ambient(cmd);
+				ambient_color.r = rgb & 0xFF;
+				ambient_color.g = rgb >> 8 & 0xFF;
+				ambient_color.b = rgb >> 16 & 0xFF;
 				break;
 			}
 			case DL_CMD_LIGHT_DIRECTIONAL0: case DL_CMD_LIGHT_DIRECTIONAL1: {
@@ -312,7 +314,8 @@ void gfx_run_compiled_dl(dl_t* dl) {
 				}
 				u32 light_index = op == DL_CMD_LIGHT_DIRECTIONAL1? 1: 0;
 				light_directions[light_index] = n;
-				light_colors[light_index] = (Color) {.r = n64light->col[0], .g = n64light->col[1], .b = n64light->col[2]};
+				u32 rgb = gfx_light_quantize_directional((u32) n64light->col[0] | (u32) n64light->col[1] << 8 | (u32) n64light->col[2] << 16);
+				light_colors[light_index] = (Color) {.r = rgb & 0xFF, .g = rgb >> 8 & 0xFF, .b = rgb >> 16 & 0xFF};
 				break;
 			}
 			case DL_CMD_MTX_SET: case DL_CMD_MTX_MUL: {
