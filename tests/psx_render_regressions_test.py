@@ -24,6 +24,21 @@ class RendererRegressionTests(unittest.TestCase):
         self.assertIn("decal_overlay ? 0x00808080 :", renderer)
         self.assertIn("append_poly(&packet, v3, sxy3, flags & ~PRIM_FLAG_TEXTURED, storage)", renderer)
 
+    def test_two_sided_billboards_survive_nclip(self):
+        jit = (ROOT / "src/port/gfx/gfx_rsp_jit.c").read_text()
+        dl = (ROOT / "src/port/psx/gfx_dl_exec_psx.c").read_text()
+        self.assertIn("flags |= PRIM_FLAG_TWO_SIDED", jit)
+        self.assertIn("!(flags & PRIM_FLAG_TWO_SIDED)", dl)
+        self.assertIn("G_CULL_BACK | G_CULL_FRONT", jit)
+        coin = (ROOT / "actors/coin/model.inc.c").read_text()
+        self.assertIn("gsSPClearGeometryMode(G_LIGHTING)", coin)
+
+    def test_floor_uv_wrap_uses_modulo_not_saturation(self):
+        jit = (ROOT / "src/port/gfx/gfx_rsp_jit.c").read_text()
+        self.assertIn("gfx_wrap_texel_psx(u, tex->width)", jit)
+        self.assertIn("gfx_wrap_texel_psx(v, tex->height)", jit)
+        self.assertNotIn("clamp(u + 128, 0, 255)", jit)
+
     def test_lakitu_bridge_wait_has_a_guard(self):
         logic = (ROOT / "src/game/behaviors/camera_lakitu.inc.c").read_text()
         self.assertIn("o->oTimer <= 30 || gMarioState->action != ACT_READING_NPC_DIALOG", logic)

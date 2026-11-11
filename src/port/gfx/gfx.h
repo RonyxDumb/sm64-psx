@@ -101,6 +101,9 @@ void gfx_run_compiled_dl(dl_t* dl);
 #define PRIM_FLAG_ENV_COLOR       0b00010000
 //#define PRIM_FLAG_ENV_ALPHA ...
 #define PRIM_FLAG_TESSELLATE      0b00100000
+/* Preserve N64 two-sided materials (coins, trees and other billboards).
+ * PS1 NCLIP rejection previously discarded their camera-facing triangles. */
+#define PRIM_FLAG_TWO_SIDED       0b01000000
 
 enum {
 	_DL_CMD_ENUM_START = (u8) G_NOOP + 1,

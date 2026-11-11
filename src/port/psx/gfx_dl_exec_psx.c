@@ -13,7 +13,7 @@
 //#define NO_GAPS // fills in T-junction gaps with more triangles (UNFINISHED - add some condition)
 #define MAX_TESSELLATION_Z 800
 #define VANITY_TESSELLATION 2 // applies to polygons near the camera
-#define SPARING_TESSELLATION 3 // applies when saving polygons from clipping
+#define SPARING_TESSELLATION 4 // only unsafe near-plane / GTE children; bounds recursion
 
 // check the .map file and ensure the section is smaller than 0x1000 so it actually fits in icache!!!
 #define DL_EXEC_ICACHE_FUNC [[gnu::section(".dl_exec")]] [[gnu::noinline]] [[gnu::flatten]]
@@ -247,7 +247,8 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		bool triangle_backfaced = (s32) gte_getDataReg(GTE_MAC0) >= 0;
 		s32 near_z_for_cull = (s16) gte_getControlReg(GTE_H) / 2;
 		bool depth_is_safe_for_cull = min_z > near_z_for_cull && z < MAX_Z;
-		if(triangle_backfaced && !v3 && !gte_flags && depth_is_safe_for_cull) return;
+		if(triangle_backfaced && !v3 && !gte_flags && depth_is_safe_for_cull
+			&& !(flags & PRIM_FLAG_TWO_SIDED)) return;
 
 		if(v3) {
 			// if this is a quad, quickly transform the extra vertex with rtps
@@ -290,7 +291,8 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 
 			// Reject only when all four depths are safely inside the clip range.
 			// Otherwise the recursive clip-recovery path below gets first chance.
-			if(triangle_backfaced && quad_second_triangle_backfaced && !gte_flags) {
+			if(triangle_backfaced && quad_second_triangle_backfaced && !gte_flags
+				&& !(flags & PRIM_FLAG_TWO_SIDED)) {
 				s32 near_z_for_quad_cull = (s16) gte_getControlReg(GTE_H) / 2;
 				if(min_z > near_z_for_quad_cull && z < MAX_Z) return;
 			}

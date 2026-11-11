@@ -1,5 +1,6 @@
 #include "port/gfx/gfx.h"
 #include "port/gfx/gfx_light_color.h"
+#include "port/gfx/gfx_texture_uv.h"
 #include <PR/gbi.h>
 #include <port/gfx/gfx_internal.h>
 #include <port/psx/scratchpad_call.h>
@@ -66,16 +67,11 @@ void ensure_vertices_converted(VtxList* list, u32 count) {
 					u = clamp(u, 0, tex->width);
 					v = clamp(v, 0, tex->height);
 				} else {
-					if(tex->width <= 32) {
-						u = clamp(u + 128, 0, 255);
-					} else if(tex->width <= 64) {
-						u = clamp(u + 64, 0, 255);
-					}
-					if(tex->height <= 32) {
-						v = clamp(v + 128, 0, 255);
-					} else if(tex->height <= 64) {
-						v = clamp(v + 64, 0, 255);
-					}
+					/* Repeat N64 floor/wall UVs with 8-bit PS1 coordinates.
+					 * Saturating them to 0/255 distorted tiled surfaces. The
+					 * PS1 texture window provides the per-texture wrap period. */
+					u = gfx_wrap_texel_psx(u, tex->width);
+					v = gfx_wrap_texel_psx(v, tex->height);
 				}
 			}
 			Color color = {.r = n64->v.cn[0], .g = n64->v.cn[1], .b = n64->v.cn[2], .a = 0};
@@ -160,6 +156,9 @@ static int max3(int x, int y, int z) {
 				GfxVtx* v2 = &compilation_vertices->psx[i2];
 				u32 flags = 0;
 				if(use_texture && compilation_tex_header) flags |= PRIM_FLAG_TEXTURED;
+				/* SM64 coins and other alpha billboards explicitly disable face
+				 * culling. Propagate that state to the native PS1 NCLIP path. */
+				if(!(geometry_mode & (G_CULL_BACK | G_CULL_FRONT))) flags |= PRIM_FLAG_TWO_SIDED;
 				if(use_env_color) flags |= PRIM_FLAG_ENV_COLOR;
 #ifdef PRIM_FLAG_ENV_ALPHA
 				if(use_env_alpha) flags |= PRIM_FLAG_ENV_ALPHA;
