@@ -80,7 +80,7 @@ STATIC_ASSERT(PAGE_SLOTS_8x16 == 512, "invalid 8x16 page capacity");
 // Uploaded textures remain resident in VRAM; this cache stores only CD staging data.
 #define TEX_BANK_SECTORS 4
 #define TEX_BANK_BYTES (TEX_BANK_SECTORS * 2048)
-#define TEX_CACHE_COUNT 4
+#define TEX_CACHE_COUNT 2
 #define TEX_CLUT_BYTES 32
 
 typedef struct {
