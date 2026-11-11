@@ -31,6 +31,10 @@ jobs:
         run: |
           cc -std=c11 -Wall -Wextra -Werror -I. tests/psx_texture_modulation_test.c -o /tmp/psx_texture_modulation_test
           /tmp/psx_texture_modulation_test
+      - name: Test GPU culling and flat shading without commercial assets
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -I. tests/psx_gpu_optimizations_test.c -o /tmp/psx_gpu_optimizations_test
+          /tmp/psx_gpu_optimizations_test
       - name: Check PS1 dialog and decal regression invariants
         run: python3 tests/psx_render_regressions_test.py
   build-playstation-disc:

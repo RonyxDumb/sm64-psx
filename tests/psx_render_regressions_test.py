@@ -46,7 +46,7 @@ class RendererRegressionTests(unittest.TestCase):
         buffers = (ROOT / "src/port/psx/gfx_framebuffers_psx.c").read_text()
         self.assertIn("#define SPARING_TESSELLATION 3", renderer)
         self.assertIn("PACKET_RESERVE_WORDS 64", buffers)
-        self.assertIn("if(header > pool_end - PACKET_RESERVE_WORDS)", buffers)
+        self.assertIn("if(header > pool_end - reserve)", buffers)
         self.assertIn("packet.header == discarded_packet", buffers)
         self.assertIn("assert(ot_z < OT_LEN)", buffers)
 
@@ -80,6 +80,13 @@ class RendererRegressionTests(unittest.TestCase):
         self.assertIn("PACKET_RESERVE_WORDS + PACKET_HUD_RESERVE_WORDS", pool)
         self.assertIn("gfx_packet_begin_ui()", pool)
         self.assertIn("is_ortho && !is_2d_background", renderer)
+
+    def test_gpu_optimizations_preserve_gradients_and_clip_only_offscreen(self):
+        renderer = (ROOT / "src/port/psx/gfx_dl_exec_psx.c").read_text()
+        self.assertIn("bool gouraud = gfx_psx_colors_vary(c0, c1, c2, c3, is_quad);", renderer)
+        self.assertIn("if(gouraud) gfx_packet_append(packet, c1);", renderer)
+        self.assertIn("if(!is_ortho && !gte_flags && !depth_straddles_clip", renderer)
+        self.assertIn("gfx_psx_outside_viewport(", renderer)
 
     def test_lakitu_bridge_wait_has_a_guard(self):
         logic = (ROOT / "src/game/behaviors/camera_lakitu.inc.c").read_text()

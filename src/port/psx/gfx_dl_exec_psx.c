@@ -4,6 +4,7 @@
 #include <port/gfx/gfx.h>
 #include <port/gfx/gfx_light_color.h>
 #include <port/gfx/gfx_texture_modulation.h>
+#include <port/gfx/gfx_gpu_optimizations.h>
 #include <ps1/registers.h>
 #include <port/gfx/gfx_internal.h>
 #include <ps1/gpucmd.h>
@@ -86,31 +87,36 @@ DL_EXEC_ICACHE_FUNC static void between(GfxVtx* dst, const GfxVtx* a, const GfxV
 DL_EXEC_ICACHE_FUNC static void append_poly(Packet* packet, bool is_quad, s32 sxy3, u32 flags, const GfxVtx* vtx) {
 	TexHeader* tex = (TexHeader*) tex_ptr;
 	bool textured = tex && (flags & PRIM_FLAG_TEXTURED);
-	/* N64 G_CC_BLENDRGBFADEA blends the texel into the SHADE-colored
-	 * surface, rather than multiplying the texel by that shade. PS1
-	 * performs RGB modulation; 0x80 is the neutral texture multiplier.
-	 * The decal's separate untextured pass keeps the underlying shade. */
+	/* N64 G_CC_BLENDRGBFADEA decals use a neutral PS1 overlay.
+	 * Compare the *final* GP0 colors after the N64->PS1 conversion:
+	 * flat triangles/quads need only one RGB word and have lower setup
+	 * cost on the PS1 GPU. This preserves every per-vertex gradient. */
 	bool decal_overlay = textured && (flags & PRIM_FLAG_DECAL);
+	u32 c0 = gfx_psx_material_color(vtx[0].color.as_u32, textured, decal_overlay);
+	u32 c1 = gfx_psx_material_color(vtx[1].color.as_u32, textured, decal_overlay);
+	u32 c2 = gfx_psx_material_color(vtx[2].color.as_u32, textured, decal_overlay);
+	u32 c3 = is_quad ? gfx_psx_material_color(vtx[3].color.as_u32, textured, decal_overlay) : c0;
+	bool gouraud = gfx_psx_colors_vary(c0, c1, c2, c3, is_quad);
 	if(textured) {
 		gfx_packet_append(packet, tex->window_cmd);
 	}
-	gfx_packet_append(packet, gfx_psx_material_color(vtx[0].color.as_u32, textured, decal_overlay) | _gp0_polygon(is_quad, false, true, textured, flags & PRIM_FLAG_FORCE_BLEND));
+	gfx_packet_append(packet, c0 | _gp0_polygon(is_quad, false, gouraud, textured, flags & PRIM_FLAG_FORCE_BLEND));
 	gte_storeDataRegM(GTE_SXY0, gfx_packet_skip(packet));
 	if(textured) {
 		gfx_packet_append(packet, vtx[0].uv | (u32) tex->clut_attr << 16);
 	}
-	gfx_packet_append(packet, gfx_psx_material_color(vtx[1].color.as_u32, textured, decal_overlay));
+	if(gouraud) gfx_packet_append(packet, c1);
 	gte_storeDataRegM(GTE_SXY1, gfx_packet_skip(packet));
 	if(textured) {
 		gfx_packet_append(packet, vtx[1].uv | (u32) tex->page_attr << 16);
 	}
-	gfx_packet_append(packet, gfx_psx_material_color(vtx[2].color.as_u32, textured, decal_overlay));
+	if(gouraud) gfx_packet_append(packet, c2);
 	gte_storeDataRegM(GTE_SXY2, gfx_packet_skip(packet));
 	if(textured) {
 		gfx_packet_append(packet, vtx[2].uv);
 	}
 	if(is_quad) {
-		gfx_packet_append(packet, gfx_psx_material_color(vtx[3].color.as_u32, textured, decal_overlay));
+		if(gouraud) gfx_packet_append(packet, c3);
 		gfx_packet_append(packet, sxy3);
 		if(textured) {
 			gfx_packet_append(packet, vtx[3].uv);
@@ -184,7 +190,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		flags |= PRIM_FLAG_FORCE_BLEND;
 	}
 
-	s32 sxy3;
+	s32 sxy3 = 0;
 	s32 z, min_z;
 	u32 gte_flags;
 	u32 depth_sum = 0;
@@ -315,6 +321,18 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		// near/far plane, subdivide it so the inside children can survive.
 		if(z <= near_z || min_z >= MAX_Z) return;
 		depth_straddles_clip = min_z <= near_z || z >= MAX_Z;
+	}
+
+	/* Screen-space clipping is conservative: reject only primitives whose
+	 * entire projected hull lies beyond one viewport edge. Never use it
+	 * when the GTE reports saturation or a near/far-plane crossing;
+	 * those must continue through the existing subdivision path. */
+	if(!is_ortho && !gte_flags && !depth_straddles_clip
+		&& gfx_psx_outside_viewport(
+			gte_getDataReg(GTE_SXY0), gte_getDataReg(GTE_SXY1),
+			gte_getDataReg(GTE_SXY2), (u32) sxy3,
+			v3 != NULL, XRES, YRES)) {
+		return;
 	}
 
 	if(flags & PRIM_FLAG_LIGHTED) {
