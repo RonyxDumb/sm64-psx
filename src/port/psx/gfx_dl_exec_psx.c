@@ -169,7 +169,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 			return;
 		}
 		flags |= PRIM_FLAG_FORCE_BLEND;
-	} else if((flags & PRIM_FLAG_TEXTURED) && ((TexHeader*) tex_ptr)->has_translucency) {
+	} else if((flags & PRIM_FLAG_TEXTURED) && tex_ptr && ((TexHeader*) tex_ptr)->has_translucency) {
 		flags |= PRIM_FLAG_FORCE_BLEND;
 	}
 
@@ -635,6 +635,8 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 				break;
 			}
 			case DL_CMD_CALL: {
+				// Guard malformed or unexpectedly deep display-list nesting.
+				assert(call_stack_idx < sizeof(call_stack) / sizeof(call_stack[0]));
 				call_stack[call_stack_idx++] = dl;
 				dl = (dl_t*) cmd;
 				break;
