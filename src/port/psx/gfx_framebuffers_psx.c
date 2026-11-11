@@ -56,10 +56,13 @@ void gfx_swap_buffers(bool vsync_30fps) {
 	startOrderingTableClear(ot, OT_LEN);
 
 	if(vsync_30fps) {
-		OSTime frame_time = osGetTime() - last_frame_time_us;
-		if(frame_time < 1000000 / 30) {
-			waitForVSync();
-			waitForVSync();
+		// Wait only for the remaining portion of this 30 Hz frame.
+		// Two *additional* VBlanks after a partially rendered frame could
+		// turn a ~20 ms frame into ~50 ms, causing avoidable stutter.
+		if(last_frame_time_us != 0) {
+			while(osGetTime() - last_frame_time_us < 1000000 / 30) {
+				waitForVSync();
+			}
 		}
 		last_frame_time_us = osGetTime();
 
