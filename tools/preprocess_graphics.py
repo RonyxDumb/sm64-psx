@@ -455,6 +455,8 @@ for line_idx, line in enumerate(in_lines):
 	if len(line) == 0 or line.startswith("//"):
 		continue
 	if line.startswith("#") and state != ParseState.MultilineComment:
+		if definitions.get("TARGET_PSX"):
+			line = re.sub(r'(#include "levels/[^/]+/areas/[^"]+/model\.inc)\.c"', r'\1.processed.c"', line)
 		out_lines.append(line + "\n")
 		continue
 	match state:

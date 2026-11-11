@@ -104,7 +104,21 @@ static int max3(int x, int y, int z) {
 
 // returns true if the compiled display list is not empty
 [[gnu::flatten]] bool gfx_compile_rsp(Gfx* cmd, bool nested) {
-	u8 first_op = DL_UNPACK_OP(*(dl_t*) cmd);
+	dl_t* stream = (dl_t*) cmd;
+	dl_t first = *stream;
+	u8 first_op = DL_UNPACK_OP(first);
+#ifdef TARGET_PSX
+	if(first_op == DL_CMD_STATIC_MESH && !(first & DL_STATIC_MESH_TEXTURES_READY)) {
+		// CD reads use the regular stack. Preload the mesh's materials before
+		// the renderer switches to its small scratchpad stack.
+		u32 count = first & DL_STATIC_MESH_TEXTURE_COUNT;
+		for(u32 i = 0; i < count; i++) {
+			void* texture = segmented_to_virtual((void*) stream[i + 1]);
+			if(texture) gfx_load_texture(texture);
+		}
+		*stream = first | DL_STATIC_MESH_TEXTURES_READY;
+	}
+#endif
 	if(first_op >= _DL_CMD_ENUM_START && first_op <= _DL_CMD_ENUM_END) {
 		return first_op != DL_CMD_END;
 	}

@@ -40,6 +40,10 @@ SPP_FILES            := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.S))
 GODDARD_C_FILES      := $(foreach dir,$(GODDARD_SRC_DIRS),$(wildcard $(dir)/*.c))
 RAW_MODEL_C_FILES    := $(wildcard actors/*/model.inc.c) $(foreach dir,$(LEVEL_DIRS),$(wildcard levels/$(dir)*/model.inc.c) $(wildcard levels/$(dir)areas/*/*/model.inc.c) $(wildcard levels/$(dir)areas/*/model.inc.c))
 CONV_MODEL_C_FILES   := $(RAW_MODEL_C_FILES:%.c=$(BUILD_DIR)/%.processed.c)
+AREA_MODEL_C_FILES   := $(foreach model,$(RAW_MODEL_C_FILES),$(if $(findstring /areas/,$(model)),$(model)))
+NATIVE_AREA_C_FILES  := $(AREA_MODEL_C_FILES:%.c=$(BUILD_DIR)/%.processed.c)
+MESH_TEXTURE_CATALOG := $(BUILD_DIR)/mesh_textures.json
+MESH_TEXTURE_SOURCES := $(wildcard bin/*.c levels/*/texture.inc.c)
 GENERATED_C_FILES    := $(BUILD_DIR)/sfx_defs.generated.c
 SFX_DATA_BIN := $(BUILD_DIR)/sfx_data.generated.bin
 
@@ -544,10 +548,17 @@ $(BUILD_DIR)/%.inc.c: $(BUILD_DIR)/%
 >	$(V)hexdump -v -e '1/1 "0x%X,"' $< > $@
 >	$(V)echo >> $@
 
-$(CONV_MODEL_C_FILES): $(BUILD_DIR)/%.processed.c: %.c $(TOOLS_DIR)/preprocess_graphics.py
+$(filter-out $(NATIVE_AREA_C_FILES),$(CONV_MODEL_C_FILES)): $(BUILD_DIR)/%.processed.c: %.c $(TOOLS_DIR)/preprocess_graphics.py
 >	$(call print,Preprocessing graphics:,$<,$@)
 >	$(V)mkdir -p $(dir $@)
 >	$(V)$(PYTHON) $(TOOLS_DIR)/preprocess_graphics.py $< $@ $(C_DEFINES)
+
+$(MESH_TEXTURE_CATALOG): $(BUILD_DIR)/tex_pack $(TOOLS_DIR)/psx_static_mesh.py $(MESH_TEXTURE_SOURCES)
+>	$(V)$(PYTHON) $(TOOLS_DIR)/psx_static_mesh.py --build-dir $(BUILD_DIR) $@ $(MESH_TEXTURE_SOURCES)
+
+$(NATIVE_AREA_C_FILES): $(BUILD_DIR)/%.processed.c: %.c $(TOOLS_DIR)/psx_static_mesh.py $(MESH_TEXTURE_CATALOG) include/PR/gbi.h
+>	$(V)mkdir -p $(dir $@)
+>	$(V)$(PYTHON) $(TOOLS_DIR)/psx_static_mesh.py --build-dir $(BUILD_DIR) --catalog $(MESH_TEXTURE_CATALOG) $< $@
 
 $(BUILD_DIR)/%.processed.c: %.c $(CONV_MODEL_C_FILES) $(TOOLS_DIR)/preprocess_graphics.py
 >	$(call print,Preprocessing graphics:,$<,$@)

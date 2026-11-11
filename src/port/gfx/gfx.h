@@ -94,6 +94,9 @@ typedef u32 dl_t;
 void gfx_reset_dl_exec();
 void gfx_run_compiled_dl(dl_t* dl);
 
+#define DL_STATIC_MESH_TEXTURE_COUNT 0xFFFFu
+#define DL_STATIC_MESH_TEXTURES_READY 0x800000u
+
 #define PRIM_FLAG_TEXTURED        0b00000001
 #define PRIM_FLAG_LIGHTED         0b00000010
 #define PRIM_FLAG_DECAL           0b00000100
@@ -138,6 +141,12 @@ enum {
 	DL_CMD_MTX_N64_MUL,
 	DL_CMD_CIRCLE_SHADOW,
 	DL_CMD_SQUARE_SHADOW,
+	// Static mesh metadata and operands linked in the level segment.
+	DL_CMD_STATIC_MESH,
+	DL_CMD_SEG_TEX,
+	DL_CMD_SEG_VTX,
+	DL_CMD_STATIC_LIGHT0,
+	DL_CMD_STATIC_LIGHT1,
 	_DL_CMD_ENUM_POST_END,
 	_DL_CMD_ENUM_END = _DL_CMD_ENUM_POST_END - 1,
 	_DL_CMD_ENUM_COUNT = _DL_CMD_ENUM_POST_END - _DL_CMD_ENUM_START

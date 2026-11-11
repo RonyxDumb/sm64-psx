@@ -26,13 +26,15 @@ static inline u32 gfx_light_rgb555_to_rgb888(u32 rgb555) {
     return r | (g << 8) | (b << 16);
 }
 
-/* Converts the ambient-light payload of DL_CMD_LIGHT_AMBIENT. */
-static inline u32 gfx_light_encode_ambient(u32 rgb888) {
+/* Constant expression for generated display lists and the runtime compiler. */
 #if defined(PSX_LIGHTS_RGB555) && PSX_LIGHTS_RGB555
-    return gfx_light_rgb888_to_rgb555(rgb888);
+#define PSX_STATIC_AMBIENT(r, g, b) (((r) >> 3) | (((g) >> 3) << 5) | (((b) >> 3) << 10))
 #else
-    return rgb888 & 0xFFFFFFu;
+#define PSX_STATIC_AMBIENT(r, g, b) ((r) | ((g) << 8) | ((b) << 16))
 #endif
+
+static inline u32 gfx_light_encode_ambient(u32 rgb888) {
+    return PSX_STATIC_AMBIENT(rgb888 & 0xFFu, (rgb888 >> 8) & 0xFFu, (rgb888 >> 16) & 0xFFu);
 }
 
 static inline u32 gfx_light_decode_ambient(u32 encoded) {

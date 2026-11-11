@@ -2,8 +2,12 @@
 import json
 from pathlib import Path
 import unittest
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+
+from psx_static_mesh import Triangle, Vertex, compile_mesh, read_combiners, tessellate, uv_offsets
 
 
 class RendererRegressionTests(unittest.TestCase):
@@ -92,6 +96,54 @@ class RendererRegressionTests(unittest.TestCase):
         logic = (ROOT / "src/game/behaviors/camera_lakitu.inc.c").read_text()
         self.assertIn("o->oTimer <= 30 || gMarioState->action != ACT_READING_NPC_DIALOG", logic)
         self.assertIn("gMarioState->actionState = 8;", logic)
+
+
+
+class StaticMeshTests(unittest.TestCase):
+    def test_wrapped_uvs_share_an_interval_without_changing_tile_phase(self):
+        points = (
+            Vertex((0, 0, 0), (-20, 10), (0, 0, 0)),
+            Vertex((100, 0, 0), (172, 10), (0, 0, 0)),
+            Vertex((0, 100, 0), (-5, 30), (0, 0, 0)),
+        )
+        offset_u, offset_v = uv_offsets(points, (32, 32))
+        self.assertEqual((offset_u, offset_v), (-32, 0))
+        for point in points:
+            self.assertEqual((point.uv[0] - offset_u) % 32, point.uv[0] % 32)
+
+    def test_uv_split_is_shared_with_untextured_neighbor(self):
+        a = Vertex((0, 0, 0), (-200, 0), (0, 0, 0))
+        b = Vertex((512, 0, 0), (200, 0), (0, 0, 0))
+        c = Vertex((0, 512, 0), (-200, 0), (0, 0, 0))
+        d = Vertex((0, -512, 0), (0, 0), (0, 0, 0))
+        untextured = Triangle((b, a, d), (0, 0), "0")
+        wrapped = Triangle((a, b, c), (32, 0), "PRIM_FLAG_TEXTURED")
+        pieces = tessellate({"untextured": [untextured], "wrapped": [wrapped]}, 1024)
+        for group in pieces.values():
+            self.assertIn((256, 0, 0), {v.xyz for tri in group for v in tri.vertices})
+        self.assertEqual(len(pieces["untextured"]), 2)
+
+    def test_static_lists_emit_native_commands_and_a_texture_preamble(self):
+        source = """static const Vtx triangle[] = {
+    {{{0, 0, 0}, 0, {-320, 0}, {0, 0, 127, 255}}},
+    {{{512, 0, 0}, 0, {320, 0}, {0, 0, 127, 255}}},
+    {{{0, 512, 0}, 0, {-320, 320}, {0, 0, 127, 255}}},
+};
+const Gfx root[] = {
+    gsDPPipeSync(),
+    gsDPSetCombineMode(G_CC_MODULATERGB, G_CC_MODULATERGB),
+    gsSPTexture(0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON),
+    gsDPSetTextureImage(G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, texture),
+    gsSPVertex(triangle, 3, 0),
+    gsSP1Triangle(0, 1, 2, 0),
+    gsSPEndDisplayList(),
+};
+"""
+        output = compile_mesh(source, {"texture": (32, 32, 0)}, read_combiners())
+        self.assertIn("DL_CMD_STATIC_MESH) | (1)", output)
+        self.assertIn("DL_CMD_SEG_TEX", output)
+        self.assertIn("DL_CMD_TRI", output)
+        self.assertNotIn("gsSPVertex(", output)
 
 
 if __name__ == "__main__":

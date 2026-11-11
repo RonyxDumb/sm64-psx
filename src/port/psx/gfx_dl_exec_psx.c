@@ -11,6 +11,7 @@
 #include <ps1/gte.h>
 #include <engine/math_util.h>
 #include <game/game_init.h>
+#include <game/memory.h>
 
 //#define NO_GAPS // fills in T-junction gaps with more triangles (UNFINISHED - add some condition)
 #define MAX_TESSELLATION_Z 800
@@ -30,11 +31,13 @@ scratchpad static Color env_color;
 scratchpad static bool is_ortho;
 static bool is_2d_background;
 static bool texture_gen_enabled;
+static bool native_uv;
 
 void gfx_reset_dl_exec() {
 	tex_ptr = NULL;
 	is_2d_background = true;
 	texture_gen_enabled = false;
+	native_uv = false;
 	env_color.as_u32 = 0xFFFFFFFF;
 	is_ortho = false;
 	gfx_modelview_identity();
@@ -75,8 +78,10 @@ DL_EXEC_ICACHE_FUNC static void between(GfxVtx* dst, const GfxVtx* a, const GfxV
 	dst->x = ((s32) a->x + b->x) / 2;
 	dst->y = ((s32) a->y + b->y) / 2;
 	dst->z = ((s32) a->z + b->z) / 2;
-	dst->u = between_uv(a->u, b->u);
-	dst->v = between_uv(a->v, b->v);
+	// Native batches already share a continuous UV interval. Wrapping
+	// their midpoint through 256 would undo the build-time UV correction.
+	dst->u = native_uv ? ((u32) a->u + b->u) / 2 : between_uv(a->u, b->u);
+	dst->v = native_uv ? ((u32) a->v + b->v) / 2 : between_uv(a->v, b->v);
 	dst->color.as_u32 = ((a->color.as_u32 & 0xFEFEFE) + (b->color.as_u32 & 0xFEFEFE)) / 2;
 }
 
@@ -466,14 +471,11 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 	gfx_packet_end(packet, ot_z);
 }
 
-DL_EXEC_ICACHE_FUNC static void set_light_n64(Light_t* n64light, u32 light_idx) {
-	u32 normals = *(u32*) n64light->dir;
+DL_EXEC_ICACHE_FUNC static void set_light(u32 normals, u32 rgb, u32 light_idx) {
 	gte_setDataReg(GTE_VXY0, (u32) ((s32) normals << 24 >> 8) >> 16 | (s32) (normals & 0xFF00) << 16 >> 8);
 	gte_setDataReg(GTE_VZ0, (s32) normals << 8 >> 24);
 	gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_NONE);
 
-	/* Native Light_t layout is always RGB888; quantize only at consumption. */
-	u32 rgb = gfx_light_quantize_directional((u32) n64light->col[0] | (u32) n64light->col[1] << 8 | (u32) n64light->col[2] << 16);
 	u32 r = rgb << 4 & 0xFF0;
 	u32 g = rgb >> 4 & 0xFF0;
 	u32 b = rgb >> 12 & 0xFF0;
@@ -697,8 +699,22 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 				tex_ptr = (dl_t*) cmd;
 				break;
 			}
+			case DL_CMD_STATIC_MESH: {
+				dl += cmd & DL_STATIC_MESH_TEXTURE_COUNT;
+				break;
+			}
+			case DL_CMD_SEG_TEX: {
+				tex_ptr = segmented_to_virtual((void*) *dl++);
+				break;
+			}
 			case DL_CMD_VTX: {
 				vertices = (GfxVtx*) cmd;
+				native_uv = false;
+				break;
+			}
+			case DL_CMD_SEG_VTX: {
+				vertices = segmented_to_virtual((void*) *dl++);
+				native_uv = true;
 				break;
 			}
 			case DL_CMD_TRI: case DL_CMD_QUAD: {
@@ -729,7 +745,14 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 			}
 			case DL_CMD_LIGHT_DIRECTIONAL0:
 			case DL_CMD_LIGHT_DIRECTIONAL1: {
-				set_light_n64((Light_t*) cmd, op - DL_CMD_LIGHT_DIRECTIONAL0);
+				const Light_t* light = (const Light_t*) cmd;
+				u32 rgb = gfx_light_quantize_directional(light->col[0] | (u32) light->col[1] << 8 | (u32) light->col[2] << 16);
+				set_light(*(const u32*) light->dir, rgb, op - DL_CMD_LIGHT_DIRECTIONAL0);
+				break;
+			}
+			case DL_CMD_STATIC_LIGHT0:
+			case DL_CMD_STATIC_LIGHT1: {
+				set_light(*dl++, gfx_light_decode_ambient(cmd), op - DL_CMD_STATIC_LIGHT0);
 				break;
 			}
 			case DL_CMD_MTX_SET: {
