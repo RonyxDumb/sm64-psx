@@ -21,7 +21,7 @@ class RendererRegressionTests(unittest.TestCase):
     def test_decal_overlay_preserves_texture_colors(self):
         renderer = (ROOT / "src/port/psx/gfx_dl_exec_psx.c").read_text()
         self.assertIn("decal_overlay = textured && (flags & PRIM_FLAG_DECAL)", renderer)
-        self.assertIn("decal_overlay ? 0x00808080 :", renderer)
+        self.assertIn("if(decal) return 0x00808080;", renderer)
         self.assertIn("append_poly(&packet, v3, sxy3, flags & ~PRIM_FLAG_TEXTURED, storage)", renderer)
 
     def test_two_sided_billboards_survive_nclip(self):
