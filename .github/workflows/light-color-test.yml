@@ -29,6 +29,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq gcc-mipsel-linux-gnu
+      - name: Test CD bank texture packing without commercial assets
+        run: python3 tests/texture_bank_test.py
       - name: Parse PS1 rendering sources in RGB888 and RGB555 modes
         shell: bash
         run: |
@@ -42,7 +44,8 @@ jobs:
               -Iinclude -Isrc -I. -Iinclude/libc -Ips1 -Ips1-bare-metal -Ips1-bare-metal/libc \
               src/port/gfx/gfx_global_dl.c \
               src/port/gfx/gfx_rsp_jit.c \
-              src/port/psx/gfx_dl_exec_psx.c
+              src/port/psx/gfx_dl_exec_psx.c \
+              src/port/psx/gfx_texture_psx.c
           done
 
   build-playstation-disc:

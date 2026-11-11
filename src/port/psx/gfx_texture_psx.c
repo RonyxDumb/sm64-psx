@@ -75,6 +75,65 @@ STATIC_ASSERT(PAGE_SLOTS_32x32 == 64, "invalid 32x32 page capacity");
 STATIC_ASSERT(PAGE_SLOTS_16x16 == 256, "invalid 16x16 page capacity");
 STATIC_ASSERT(PAGE_SLOTS_8x16 == 512, "invalid 8x16 page capacity");
 
+// The CD archive is packed into 8-KiB banks, each containing multiple textures.
+// A small LRU cache avoids repeating physical seeks/reads for neighboring images.
+// Uploaded textures remain resident in VRAM; this cache stores only CD staging data.
+#define TEX_BANK_SECTORS 4
+#define TEX_BANK_BYTES (TEX_BANK_SECTORS * 2048)
+#define TEX_CACHE_COUNT 4
+#define TEX_CLUT_BYTES 32
+
+typedef struct {
+	u32 data[TEX_BANK_BYTES / sizeof(u32)]; // aligned for CD and GPU DMA
+	u32 last_used;
+	u16 first_sector;
+	bool valid;
+} TextureBank;
+
+static TextureBank texture_banks[TEX_CACHE_COUNT];
+static u32 texture_bank_clock;
+
+extern u8 _texture_data_segment[];
+UNUSED extern u8 _texture_data_segment_end[];
+
+static const u8* get_packed_texture(const TexHeader* header) {
+	u32 sector = header->pixel_data_bank_sector;
+	u32 offset = header->pixel_data_bank_offset;
+	u32 bytes = TEX_CLUT_BYTES + ((u32) header->width * header->height / 2);
+	if((sector % TEX_BANK_SECTORS) || (offset & 3)
+		|| bytes > TEX_BANK_BYTES || offset > TEX_BANK_BYTES - bytes) {
+		abortf("invalid packed texture bank: sector %u offset %u size %u\\n", sector, offset, bytes);
+	}
+
+	TextureBank* bank = NULL;
+	TextureBank* victim = &texture_banks[0];
+	for(u32 i = 0; i < TEX_CACHE_COUNT; i++) {
+		TextureBank* entry = &texture_banks[i];
+		if(entry->valid && entry->first_sector == sector) {
+			bank = entry;
+			break;
+		}
+		if(!entry->valid || (victim->valid && entry->last_used < victim->last_used)) {
+			victim = entry;
+		}
+	}
+	if(!bank) {
+		bank = victim;
+		// sendVRAMData() is asynchronous. Do not overwrite a bank until the
+		// GPU has finished reading CLUT/texture pixels from its RAM buffer.
+		waitForDMADone();
+		bool prev_can_show_screen_message = can_show_screen_message;
+		can_show_screen_message = false;
+		const u8* start = _texture_data_segment + sector * 2048;
+		dma_read((u8*) bank->data, start, start + TEX_BANK_BYTES);
+		can_show_screen_message = prev_can_show_screen_message;
+		bank->first_sector = sector;
+		bank->valid = true;
+	}
+	bank->last_used = ++texture_bank_clock;
+	return (const u8*) bank->data + offset;
+}
+
 static void upload_texture(u32 vram_x, u32 vram_y, u32 clut_idx, void* tex_data, u8 vram_width, u8 height, const void* pixel_data) {
 	TexHeader* tex = tex_data;
 	int clut_x, clut_y;
@@ -96,23 +155,15 @@ static void upload_texture(u32 vram_x, u32 vram_y, u32 clut_idx, void* tex_data,
 	tex->offy = vram_y % 256;
 }
 
-extern u8 _texture_data_segment[];
-UNUSED extern u8 _texture_data_segment_end[];
-
 [[gnu::noinline]] void gfx_load_texture(void* tex_ptr) {
 	assert(tex_ptr);
 	TexHeader* tex_header = tex_ptr;
 	if(((u32) tex_header->window_cmd >> 24) == ((u32) GP0_CMD_TEXWINDOW >> 24)) {
 		return; // already loaded
 	}
-	const void* dma_begin_addr = _texture_data_segment + tex_header->pixel_data_sector * 2048;
-	u8 alignas(u32) pixel_data[tex_header->pixel_data_sector_count * 2048];
-
-	// dma_read may show a loading screen, but the loading screen needs to load the font, so temporarily prevent that
-	bool prev_can_show_screen_message = can_show_screen_message;
-	can_show_screen_message = false;
-	dma_read(pixel_data, dma_begin_addr, dma_begin_addr + tex_header->pixel_data_sector_count * 2048);
-	can_show_screen_message = prev_can_show_screen_message;
+	// One CD transfer fetches a whole bank; subsequent textures in that bank
+	// are uploaded directly from RAM with no further CD commands.
+	const u8* pixel_data = get_packed_texture(tex_header);
 
 	u16 width = tex_header->width;
 	u16 height = tex_header->height;
