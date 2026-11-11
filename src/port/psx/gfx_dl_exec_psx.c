@@ -80,6 +80,18 @@ DL_EXEC_ICACHE_FUNC static void between(GfxVtx* dst, const GfxVtx* a, const GfxV
 	dst->color.as_u32 = ((a->color.as_u32 & 0xFEFEFE) + (b->color.as_u32 & 0xFEFEFE)) / 2;
 }
 
+/* PS1 textured polygons multiply each vertex channel by texel * 2 / 128.
+ * N64 MODULATERGB uses texel * shade / 255. The PS1 neutral multiplier
+ * is therefore 0x80, not 0xFF. Apply the correction only to the title
+ * logo, leaving Mario's decals and world materials unchanged. */
+DL_EXEC_ICACHE_FUNC static u32 title_logo_modulation_color(u32 rgb, u32 flags, bool textured, bool decal) {
+	if(decal) return 0x00808080;
+	if(textured && (flags & PRIM_FLAG_TITLE_LOGO)) {
+		return (rgb & 0x00FEFEFE) >> 1;
+	}
+	return rgb;
+}
+
 DL_EXEC_ICACHE_FUNC static void append_poly(Packet* packet, bool is_quad, s32 sxy3, u32 flags, const GfxVtx* vtx) {
 	TexHeader* tex = (TexHeader*) tex_ptr;
 	bool textured = tex && (flags & PRIM_FLAG_TEXTURED);
@@ -91,23 +103,23 @@ DL_EXEC_ICACHE_FUNC static void append_poly(Packet* packet, bool is_quad, s32 sx
 	if(textured) {
 		gfx_packet_append(packet, tex->window_cmd);
 	}
-	gfx_packet_append(packet, (decal_overlay ? 0x00808080 : vtx[0].color.as_u32) | _gp0_polygon(is_quad, false, true, textured, flags & PRIM_FLAG_FORCE_BLEND));
+	gfx_packet_append(packet, title_logo_modulation_color(vtx[0].color.as_u32, flags, textured, decal_overlay) | _gp0_polygon(is_quad, false, true, textured, flags & PRIM_FLAG_FORCE_BLEND));
 	gte_storeDataRegM(GTE_SXY0, gfx_packet_skip(packet));
 	if(textured) {
 		gfx_packet_append(packet, vtx[0].uv | (u32) tex->clut_attr << 16);
 	}
-	gfx_packet_append(packet, decal_overlay ? 0x00808080 : vtx[1].color.as_u32);
+	gfx_packet_append(packet, title_logo_modulation_color(vtx[1].color.as_u32, flags, textured, decal_overlay));
 	gte_storeDataRegM(GTE_SXY1, gfx_packet_skip(packet));
 	if(textured) {
 		gfx_packet_append(packet, vtx[1].uv | (u32) tex->page_attr << 16);
 	}
-	gfx_packet_append(packet, decal_overlay ? 0x00808080 : vtx[2].color.as_u32);
+	gfx_packet_append(packet, title_logo_modulation_color(vtx[2].color.as_u32, flags, textured, decal_overlay));
 	gte_storeDataRegM(GTE_SXY2, gfx_packet_skip(packet));
 	if(textured) {
 		gfx_packet_append(packet, vtx[2].uv);
 	}
 	if(is_quad) {
-		gfx_packet_append(packet, decal_overlay ? 0x00808080 : vtx[3].color.as_u32);
+		gfx_packet_append(packet, title_logo_modulation_color(vtx[3].color.as_u32, flags, textured, decal_overlay));
 		gfx_packet_append(packet, sxy3);
 		if(textured) {
 			gfx_packet_append(packet, vtx[3].uv);
@@ -184,6 +196,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 	s32 sxy3;
 	s32 z, min_z;
 	u32 gte_flags;
+	u32 depth_sum = 0;
 	if(is_ortho) {
 		z = is_2d_background? BACKGROUND_Z: (foreground_z? --foreground_z: 0);
 		min_z = z;
@@ -231,6 +244,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		z = gte_getDataReg(GTE_SZ1);
 		s32 v1sz = gte_getDataReg(GTE_SZ2);
 		s32 v2sz = gte_getDataReg(GTE_SZ3);
+		depth_sum = (u32) (z + v1sz + v2sz);
 		if(v1sz > z) {
 			min_z = z;
 			z = v1sz;
@@ -286,6 +300,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 			gte_setDataReg(GTE_SXY0, sxy0);
 
 			s32 v3sz = gte_getDataReg(GTE_SZ3);
+			depth_sum += v3sz;
 			if(v3sz > z) {
 				z = v3sz;
 			} else if(v3sz < min_z) {
@@ -418,7 +433,16 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		return;
 	}
 
-	u32 ot_z = z / (MAX_Z / Z_BUCKETS) + FOREGROUND_BUCKETS;
+	/* The PS1 has no depth buffer. For the interlocking title letters
+	 * (notably the M crossing the A), ordering by the farthest vertex
+	 * paints long side faces in front of nearer faces. Sort title polygons
+	 * by their mean camera-space depth instead; keep the world renderer's
+	 * established conservative farthest-depth ordering unchanged. */
+	u32 sort_z = z;
+	if(!is_ortho && (flags & PRIM_FLAG_TITLE_LOGO)) {
+		sort_z = depth_sum / (v3 ? 4 : 3);
+	}
+	u32 ot_z = sort_z / (MAX_Z / Z_BUCKETS) + FOREGROUND_BUCKETS;
 	/* The cap emblem and other decals sit on surfaces with almost
 	 * identical depth. Draw them slightly nearer to avoid hiding the M. */
 	if((flags & PRIM_FLAG_DECAL) && ot_z > FOREGROUND_BUCKETS + DECAL_Z_BIAS) {

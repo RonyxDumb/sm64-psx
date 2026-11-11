@@ -156,6 +156,9 @@ static int max3(int x, int y, int z) {
 				GfxVtx* v2 = &compilation_vertices->psx[i2];
 				u32 flags = 0;
 				if(use_texture && compilation_tex_header) flags |= PRIM_FLAG_TEXTURED;
+				/* Preserve the title logo's special unlit modulation and
+				 * painter-order sorting through nested compiled display lists. */
+				if(geometry_mode & G_PORT_TITLE_LOGO) flags |= PRIM_FLAG_TITLE_LOGO;
 				/* SM64 coins and other alpha billboards explicitly disable face
 				 * culling. Propagate that state to the native PS1 NCLIP path. */
 				if(!(geometry_mode & (G_CULL_BACK | G_CULL_FRONT))) flags |= PRIM_FLAG_TWO_SIDED;

@@ -3300,6 +3300,7 @@ static const Gfx intro_seg7_dl_0700ADC0[] = {
 // 0x0700B3A0 - 0x0700B420
 const Gfx intro_seg7_dl_0700B3A0[] = {
     gsDPPipeSync(),
+    gsSPSetGeometryMode(G_PORT_TITLE_LOGO),
     gsDPSetCombineMode(G_CC_MODULATERGB, G_CC_MODULATERGB),
     gsSPClearGeometryMode(G_LIGHTING),
     gsDPSetTile(G_IM_FMT_RGBA, G_IM_SIZ_16b, 0, 0, G_TX_LOADTILE, 0, G_TX_WRAP | G_TX_NOMIRROR, G_TX_NOMASK, G_TX_NOLOD, G_TX_WRAP | G_TX_NOMIRROR, G_TX_NOMASK, G_TX_NOLOD),
@@ -3314,6 +3315,7 @@ const Gfx intro_seg7_dl_0700B3A0[] = {
     gsDPSetCombineMode(G_CC_SHADE, G_CC_SHADE),
     gsSPDisplayList(intro_seg7_dl_0700ADC0),
     gsSPSetGeometryMode(G_LIGHTING),
+    gsSPClearGeometryMode(G_PORT_TITLE_LOGO),
     gsSPEndDisplayList(),
 };
 

@@ -48,6 +48,19 @@ class RendererRegressionTests(unittest.TestCase):
         self.assertIn("packet.header == discarded_packet", buffers)
         self.assertIn("assert(ot_z < OT_LEN)", buffers)
 
+    def test_title_logo_brightness_and_depth_are_isolated(self):
+        model = (ROOT / "levels/intro/leveldata.c").read_text()
+        renderer = (ROOT / "src/port/psx/gfx_dl_exec_psx.c").read_text()
+        jit = (ROOT / "src/port/gfx/gfx_rsp_jit.c").read_text()
+        flags = (ROOT / "src/port/gfx/gfx.h").read_text()
+        self.assertIn("gsSPSetGeometryMode(G_PORT_TITLE_LOGO)", model)
+        self.assertIn("gsSPClearGeometryMode(G_PORT_TITLE_LOGO)", model)
+        self.assertIn("if(geometry_mode & G_PORT_TITLE_LOGO) flags |= PRIM_FLAG_TITLE_LOGO;", jit)
+        self.assertIn("PRIM_FLAG_TITLE_LOGO", flags)
+        self.assertIn("return (rgb & 0x00FEFEFE) >> 1;", renderer)
+        self.assertIn("sort_z = depth_sum / (v3 ? 4 : 3);", renderer)
+        self.assertIn("if(!is_ortho && (flags & PRIM_FLAG_TITLE_LOGO))", renderer)
+
     def test_lakitu_bridge_wait_has_a_guard(self):
         logic = (ROOT / "src/game/behaviors/camera_lakitu.inc.c").read_text()
         self.assertIn("o->oTimer <= 30 || gMarioState->action != ACT_READING_NPC_DIALOG", logic)

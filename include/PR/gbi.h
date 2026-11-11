@@ -365,6 +365,9 @@
 #define G_LIGHTING		0x00020000
 #define G_TEXTURE_GEN		0x00040000
 #define G_TEXTURE_GEN_LINEAR	0x00080000
+/* PS1-only title logo material marker. Not an N64 RSP hardware bit.
+ * Allows correct PS1 brightness/depth handling without changing game art. */
+#define G_PORT_TITLE_LOGO	0x40000000
 #define G_LOD			0x00100000	/* NOT IMPLEMENTED */
 #if	(defined(F3DEX_GBI)||defined(F3DLP_GBI))
 # define G_CLIPPING		0x00800000
