@@ -13,7 +13,10 @@
 //#define NO_GAPS // fills in T-junction gaps with more triangles (UNFINISHED - add some condition)
 #define MAX_TESSELLATION_Z 800
 #define VANITY_TESSELLATION 2 // applies to polygons near the camera
-#define SPARING_TESSELLATION 4 // only unsafe near-plane / GTE children; bounds recursion
+// Four levels can generate 256 children per original quad, overflowing the
+// fixed PS1 GPU command pool in ordinary stages. The previous three-level
+// budget bounds subdivisions while preserving near-plane recovery.
+#define SPARING_TESSELLATION 3 // applies when saving polygons from clipping
 
 // check the .map file and ensure the section is smaller than 0x1000 so it actually fits in icache!!!
 #define DL_EXEC_ICACHE_FUNC [[gnu::section(".dl_exec")]] [[gnu::noinline]] [[gnu::flatten]]

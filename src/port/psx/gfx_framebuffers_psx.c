@@ -6,6 +6,14 @@
 
 static u8 selected_fb = 0;
 static Framebuffer fb[2];
+
+/* A normal textured, shaded quad needs at most 14 GPU words. A decal has
+ * an extra untextured pass; reserve 64 words per packet to cover both passes
+ * and shadows. If a busy scene exhausts the fixed 64 KiB command buffer,
+ * write the packet here and discard it instead of corrupting RAM. */
+#define PACKET_RESERVE_WORDS 64
+static u32 discarded_packet[PACKET_RESERVE_WORDS];
+STATIC_ASSERT(PACKET_POOL_LEN > PACKET_RESERVE_WORDS, "packet reserve exceeds GPU command buffer");
 scratchpad static u32* ot;
 scratchpad static u32* next_packet;
 
@@ -82,15 +90,27 @@ void gfx_discard_frame() {
 }
 
 ALWAYS_INLINE Packet gfx_packet_begin() {
+	u32* pool_end = fb[selected_fb].packet_pool + PACKET_POOL_LEN;
+	u32* header = next_packet;
+	/* Reserve space before writing any GPU command. Checking only in
+	 * gfx_packet_end() is too late: the overflow has already occurred. */
+	if(header > pool_end - PACKET_RESERVE_WORDS) {
+		header = discarded_packet;
+	}
 	return (Packet) {
-		.header = next_packet,
-		.start = next_packet + 1,
-		.end = next_packet + 1
+		.header = header,
+		.start = header + 1,
+		.end = header + 1
 	};
 }
 
 ALWAYS_INLINE void gfx_packet_end(Packet packet, u32 ot_z) {
-	assert((u32) (next_packet - fb[selected_fb].packet_pool) < PACKET_POOL_LEN);
+	if(packet.header == discarded_packet) {
+		return; // drop safely, do not link this packet into the GPU OT
+	}
+	/* Each GP0 packet must fit in the reserved space, with a valid depth. */
+	assert(packet.end <= fb[selected_fb].packet_pool + PACKET_POOL_LEN);
+	assert(ot_z < OT_LEN);
 	u32 packet_size = (u32) packet.end - (u32) packet.start;
 	*packet.header = ot[ot_z] | packet_size << 22;
 	ot[ot_z] = (u32) next_packet & 0x00FFFFFF;

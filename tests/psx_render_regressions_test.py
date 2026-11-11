@@ -39,6 +39,15 @@ class RendererRegressionTests(unittest.TestCase):
         self.assertIn("gfx_wrap_texel_psx(v, tex->height)", jit)
         self.assertNotIn("clamp(u + 128, 0, 255)", jit)
 
+    def test_levels_do_not_exhaust_gpu_packet_pool(self):
+        renderer = (ROOT / "src/port/psx/gfx_dl_exec_psx.c").read_text()
+        buffers = (ROOT / "src/port/psx/gfx_framebuffers_psx.c").read_text()
+        self.assertIn("#define SPARING_TESSELLATION 3", renderer)
+        self.assertIn("PACKET_RESERVE_WORDS 64", buffers)
+        self.assertIn("if(header > pool_end - PACKET_RESERVE_WORDS)", buffers)
+        self.assertIn("packet.header == discarded_packet", buffers)
+        self.assertIn("assert(ot_z < OT_LEN)", buffers)
+
     def test_lakitu_bridge_wait_has_a_guard(self):
         logic = (ROOT / "src/game/behaviors/camera_lakitu.inc.c").read_text()
         self.assertIn("o->oTimer <= 30 || gMarioState->action != ACT_READING_NPC_DIALOG", logic)
