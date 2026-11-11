@@ -143,9 +143,11 @@ static void gfx_emit_screen_quad_impl(s16 x0, s16 y0, s16 x1, s16 y1, bool flip_
 		int logical_width = last_tex->rotated ? last_tex->height : last_tex->width;
 		int logical_height = last_tex->rotated ? last_tex->width : last_tex->height;
 		for(int i = 0; i < 4; i++) {
-			int u = (i & 2) ? logical_width - 1 : 0;
-			int v = (i & 1) ? logical_height - 1 : 0;
-			if(flip_v) v = logical_height - 1 - v;
+			/* PS1 polygons exclude the right/bottom edges: use the full
+			 * logical texture extent so the final glyph pixels are sampled. */
+			int u = (i & 2) ? logical_width : 0;
+			int v = (i & 1) ? logical_height : 0;
+			if(flip_v) v = logical_height - v;
 			list->psx[i].u = last_tex->rotated ? v : u;
 			list->psx[i].v = last_tex->rotated ? u : v;
 		}
