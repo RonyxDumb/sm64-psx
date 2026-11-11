@@ -114,6 +114,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Docker runs as root; hand the generated disc files back to the Actions runner.
+          sudo chown -R "$(id -u):$(id -g)" build/us_psx
           test -s build/us_psx/sm64.iso
           test -s build/us_psx/sm64.cue
           grep -qi 'sm64.iso' build/us_psx/sm64.cue || \
