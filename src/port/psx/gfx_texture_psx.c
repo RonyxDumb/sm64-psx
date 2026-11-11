@@ -23,7 +23,9 @@
 #define PAGES_END 32
 
 #define BPP 4
-#define COUNT_IN_PAGE(w, h) (16 / BPP * 64 / (w) * (256 / (h)))
+// Width here is already measured in 16-bit VRAM pixels (4 texels per pixel).
+// Do not apply the 4-bpp conversion a second time: it overbooks VRAM pages.
+#define COUNT_IN_PAGE(w, h) ((64 / (w)) * (256 / (h)))
 
 #define LOW_CLUTS_PER_ROW ((PAGES_END - FIRST_PAGE_CLUTS) * 64 / (1 << BPP))
 #define LOW_CLUT_SLOTS (LOW_CLUTS_PER_ROW * 256)
@@ -60,12 +62,18 @@
 
 #define PAGES_8x16 (FIRST_PAGE_CLUTS - FIRST_PAGE_8x16)
 #define PAGE_SLOTS_8x16 COUNT_IN_PAGE(8 / BPP, 16)
-#define SLOTS_8x16 (PAGE_SLOTS_8x16 * PAGES_8x16 / 64)
+#define SLOTS_8x16 (PAGE_SLOTS_8x16 * PAGES_8x16)
 #define FIRST_CLUT_8x16 (FIRST_CLUT_16x16 + SLOTS_16x16)
 
 #define TEX_SLOTS (SLOTS_128x32 + SLOTS_64x64 + SLOTS_64x32 + SLOTS_32x32 + SLOTS_16x16 + SLOTS_8x16)
 
 STATIC_ASSERT(CLUT_SLOTS >= TEX_SLOTS, "not enough clut slots for the amount of texture slots");
+STATIC_ASSERT(PAGE_SLOTS_128x32 == 16, "invalid 128x32 page capacity");
+STATIC_ASSERT(PAGE_SLOTS_64x64 == 16, "invalid 64x64 page capacity");
+STATIC_ASSERT(PAGE_SLOTS_64x32 == 32, "invalid 64x32 page capacity");
+STATIC_ASSERT(PAGE_SLOTS_32x32 == 64, "invalid 32x32 page capacity");
+STATIC_ASSERT(PAGE_SLOTS_16x16 == 256, "invalid 16x16 page capacity");
+STATIC_ASSERT(PAGE_SLOTS_8x16 == 512, "invalid 8x16 page capacity");
 
 static void upload_texture(u32 vram_x, u32 vram_y, u32 clut_idx, void* tex_data, u8 vram_width, u8 height, const void* pixel_data) {
 	TexHeader* tex = tex_data;
@@ -114,7 +122,7 @@ UNUSED extern u8 _texture_data_segment_end[];
 	if(width <= 8 && height <= 16) {
 		static u32 cur_slot_8x16 = 0;
 		assert(cur_slot_8x16 < SLOTS_8x16);
-		u32 slots_in_row = 64 / (16 / (16 / BPP)) * PAGES_8x16;
+		u32 slots_in_row = 64 / (8 / (16 / BPP)) * PAGES_8x16;
 		vram_x = FIRST_PAGE_8x16 % 16 * 64 + cur_slot_8x16 % slots_in_row * (8 / (16 / BPP));
 		vram_y = FIRST_PAGE_8x16 / 16 * 256 + cur_slot_8x16 / slots_in_row * 16;
 		slot_idx = FIRST_CLUT_8x16 + cur_slot_8x16++;
