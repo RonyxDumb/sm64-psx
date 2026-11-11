@@ -21,7 +21,9 @@ class RendererRegressionTests(unittest.TestCase):
     def test_decal_overlay_preserves_texture_colors(self):
         renderer = (ROOT / "src/port/psx/gfx_dl_exec_psx.c").read_text()
         self.assertIn("decal_overlay = textured && (flags & PRIM_FLAG_DECAL)", renderer)
-        self.assertIn("if(decal) return 0x00808080;", renderer)
+        modulation = (ROOT / "src/port/gfx/gfx_texture_modulation.h").read_text()
+        self.assertIn("if(decal_overlay)", modulation)
+        self.assertIn("return 0x00808080u;", modulation)
         self.assertIn("append_poly(&packet, v3, sxy3, flags & ~PRIM_FLAG_TEXTURED, storage)", renderer)
 
     def test_two_sided_billboards_survive_nclip(self):
@@ -48,7 +50,7 @@ class RendererRegressionTests(unittest.TestCase):
         self.assertIn("packet.header == discarded_packet", buffers)
         self.assertIn("assert(ot_z < OT_LEN)", buffers)
 
-    def test_title_logo_brightness_and_depth_are_isolated(self):
+    def test_title_logo_depth_is_isolated_global_texture_brightness_is_not(self):
         model = (ROOT / "levels/intro/leveldata.c").read_text()
         renderer = (ROOT / "src/port/psx/gfx_dl_exec_psx.c").read_text()
         jit = (ROOT / "src/port/gfx/gfx_rsp_jit.c").read_text()
@@ -57,7 +59,9 @@ class RendererRegressionTests(unittest.TestCase):
         self.assertIn("gsSPClearGeometryMode(G_PORT_TITLE_LOGO)", model)
         self.assertIn("if(geometry_mode & G_PORT_TITLE_LOGO) flags |= PRIM_FLAG_TITLE_LOGO;", jit)
         self.assertIn("PRIM_FLAG_TITLE_LOGO", flags)
-        self.assertIn("return (rgb & 0x00FEFEFE) >> 1;", renderer)
+        self.assertIn("gfx_psx_material_color(vtx[0].color.as_u32, textured, decal_overlay)", renderer)
+        self.assertIn("#include <port/gfx/gfx_texture_modulation.h>", renderer)
+        self.assertNotIn("textured && (flags & PRIM_FLAG_TITLE_LOGO)", renderer)
         self.assertIn("sort_z = depth_sum / (v3 ? 4 : 3);", renderer)
         self.assertIn("if(!is_ortho && (flags & PRIM_FLAG_TITLE_LOGO))", renderer)
 

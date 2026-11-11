@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <port/gfx/gfx.h>
 #include <port/gfx/gfx_light_color.h>
+#include <port/gfx/gfx_texture_modulation.h>
 #include <ps1/registers.h>
 #include <port/gfx/gfx_internal.h>
 #include <ps1/gpucmd.h>
@@ -80,18 +81,8 @@ DL_EXEC_ICACHE_FUNC static void between(GfxVtx* dst, const GfxVtx* a, const GfxV
 	dst->color.as_u32 = ((a->color.as_u32 & 0xFEFEFE) + (b->color.as_u32 & 0xFEFEFE)) / 2;
 }
 
-/* PS1 textured polygons multiply each vertex channel by texel * 2 / 128.
- * N64 MODULATERGB uses texel * shade / 255. The PS1 neutral multiplier
- * is therefore 0x80, not 0xFF. Apply the correction only to the title
- * logo, leaving Mario's decals and world materials unchanged. */
-DL_EXEC_ICACHE_FUNC static u32 title_logo_modulation_color(u32 rgb, u32 flags, bool textured, bool decal) {
-	if(decal) return 0x00808080;
-	if(textured && (flags & PRIM_FLAG_TITLE_LOGO)) {
-		return (rgb & 0x00FEFEFE) >> 1;
-	}
-	return rgb;
-}
-
+/* The N64->PS1 RGB modulation conversion is shared by every textured
+ * polygon; the title-only geometry bit is still used for depth ordering. */
 DL_EXEC_ICACHE_FUNC static void append_poly(Packet* packet, bool is_quad, s32 sxy3, u32 flags, const GfxVtx* vtx) {
 	TexHeader* tex = (TexHeader*) tex_ptr;
 	bool textured = tex && (flags & PRIM_FLAG_TEXTURED);
@@ -103,23 +94,23 @@ DL_EXEC_ICACHE_FUNC static void append_poly(Packet* packet, bool is_quad, s32 sx
 	if(textured) {
 		gfx_packet_append(packet, tex->window_cmd);
 	}
-	gfx_packet_append(packet, title_logo_modulation_color(vtx[0].color.as_u32, flags, textured, decal_overlay) | _gp0_polygon(is_quad, false, true, textured, flags & PRIM_FLAG_FORCE_BLEND));
+	gfx_packet_append(packet, gfx_psx_material_color(vtx[0].color.as_u32, textured, decal_overlay) | _gp0_polygon(is_quad, false, true, textured, flags & PRIM_FLAG_FORCE_BLEND));
 	gte_storeDataRegM(GTE_SXY0, gfx_packet_skip(packet));
 	if(textured) {
 		gfx_packet_append(packet, vtx[0].uv | (u32) tex->clut_attr << 16);
 	}
-	gfx_packet_append(packet, title_logo_modulation_color(vtx[1].color.as_u32, flags, textured, decal_overlay));
+	gfx_packet_append(packet, gfx_psx_material_color(vtx[1].color.as_u32, textured, decal_overlay));
 	gte_storeDataRegM(GTE_SXY1, gfx_packet_skip(packet));
 	if(textured) {
 		gfx_packet_append(packet, vtx[1].uv | (u32) tex->page_attr << 16);
 	}
-	gfx_packet_append(packet, title_logo_modulation_color(vtx[2].color.as_u32, flags, textured, decal_overlay));
+	gfx_packet_append(packet, gfx_psx_material_color(vtx[2].color.as_u32, textured, decal_overlay));
 	gte_storeDataRegM(GTE_SXY2, gfx_packet_skip(packet));
 	if(textured) {
 		gfx_packet_append(packet, vtx[2].uv);
 	}
 	if(is_quad) {
-		gfx_packet_append(packet, title_logo_modulation_color(vtx[3].color.as_u32, flags, textured, decal_overlay));
+		gfx_packet_append(packet, gfx_psx_material_color(vtx[3].color.as_u32, textured, decal_overlay));
 		gfx_packet_append(packet, sxy3);
 		if(textured) {
 			gfx_packet_append(packet, vtx[3].uv);
