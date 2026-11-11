@@ -44,7 +44,21 @@ static void camera_lakitu_intro_act_trigger_cutscene(void) {
  * Warp up into the air and spawn cloud, then enter the TODO action.
  */
 static void camera_lakitu_intro_act_spawn_cloud(void) {
-    if (set_mario_npc_dialog(MARIO_DIALOG_LOOK_UP) == MARIO_DIALOG_STATUS_SPEAK) {
+    s32 status = set_mario_npc_dialog(MARIO_DIALOG_LOOK_UP);
+    /* The bridge trigger has already put Mario into ACT_READING_NPC_DIALOG.
+     * On PS1 the NPC animation/state update can occasionally stop short of
+     * the exact SPEAK state (8), leaving Mario locked on the bridge forever.
+     * Only recover after one full second and only if this very dialogue has
+     * actually started. Never bypass the initial activation condition. */
+    if (status != MARIO_DIALOG_STATUS_SPEAK) {
+        if (o->oTimer <= 30 || gMarioState->action != ACT_READING_NPC_DIALOG) {
+            return;
+        }
+        if (gMarioState->actionState < 8) {
+            gMarioState->actionState = 8;
+        }
+    }
+    { 
         o->oAction = CAMERA_LAKITU_INTRO_ACT_UNK2;
 
         ISETFIELD(o, oPosX, 1800);
