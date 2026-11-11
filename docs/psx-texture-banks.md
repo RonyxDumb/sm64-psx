@@ -6,7 +6,7 @@ now stores multiple complete payloads in each **8 KiB / four-sector CD bank**.
 Each 20-byte `TexHeader` records the bank's first sector and its 4-byte-aligned
 payload offset. Every texture is entirely within one bank.
 
-The runtime maintains **four 8 KiB LRU staging banks (32 KiB RAM)**. The first
+The runtime maintains **two 8 KiB LRU staging banks (16 KiB RAM)**. The first
 texture used from a bank fetches all four sectors in one continuous CD read;
 other textures in that bank reuse the same RAM without new disc commands.
 After upload, they remain resident in 4-bpp PS1 VRAM and their header records
