@@ -635,8 +635,10 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 				break;
 			}
 			case DL_CMD_CALL: {
-				// Guard malformed or unexpectedly deep display-list nesting.
-				assert(call_stack_idx < sizeof(call_stack) / sizeof(call_stack[0]));
+				// A malformed or cyclic display list must not overwrite the call stack.
+				if(call_stack_idx >= sizeof(call_stack) / sizeof(call_stack[0])) {
+					return;
+				}
 				call_stack[call_stack_idx++] = dl;
 				dl = (dl_t*) cmd;
 				break;
