@@ -60,7 +60,6 @@ void gfx_swap_buffers(bool vsync_30fps) {
 	fb[selected_fb].frame_start_packet[0] = gp0_tag(7, (void*) prev_ot_entry);
 
 	sendLinkedList(&ot[OT_LEN - 1]);
-	GPU_GP1 = gp1_fbOffset(selected_fb? 0: XRES, 0);
 
 	selected_fb ^= 1;
 	ot = fb[selected_fb].ot;
@@ -68,17 +67,23 @@ void gfx_swap_buffers(bool vsync_30fps) {
 	startOrderingTableClear(ot, OT_LEN);
 
 	if(vsync_30fps) {
-		// Wait only for the remaining portion of this 30 Hz frame.
-		// Two *additional* VBlanks after a partially rendered frame could
-		// turn a ~20 ms frame into ~50 ms, causing avoidable stutter.
-		if(last_frame_time_us != 0) {
-			while(osGetTime() - last_frame_time_us < 1000000 / 30) {
-				waitForVSync();
-			}
-		}
+		/* Never switch the displayed PS1 framebuffer in the middle of a
+		 * scanout. A late frame used to skip the time-based VSync loop
+		 * completely, which could tear the HUD and static geometry.
+		 * Acknowledge any stale VSync IRQ, then wait for at least one new
+		 * vertical blank; use a second only if the 30 Hz target is early. */
+		IRQ_STAT = ~(1 << IRQ_VSYNC);
+		do {
+			waitForVSync();
+		} while(last_frame_time_us != 0 && osGetTime() - last_frame_time_us < 1000000 / 30);
 		last_frame_time_us = osGetTime();
+	}
 
-		GPU_GP1 = gp1_dispBlank(false); // ensure the display has been turned back on
+	/* selected_fb now points to the next draw buffer. Present the
+	 * previously submitted one at VBlank (or immediately for loader UI). */
+	GPU_GP1 = gp1_fbOffset(selected_fb? XRES: 0, 0);
+	if(vsync_30fps) {
+		GPU_GP1 = gp1_dispBlank(false);
 	}
 
 	awaitOrderingTableClear();
