@@ -102,7 +102,7 @@ static const u8* get_packed_texture(const TexHeader* header) {
 	u32 bytes = TEX_CLUT_BYTES + ((u32) header->width * header->height / 2);
 	if((sector % TEX_BANK_SECTORS) || (offset & 3)
 		|| bytes > TEX_BANK_BYTES || offset > TEX_BANK_BYTES - bytes) {
-		abortf("invalid packed texture bank: sector %u offset %u size %u\\n", sector, offset, bytes);
+		abortf("invalid packed texture bank: sector %u offset %u size %u\n", sector, offset, bytes);
 	}
 
 	TextureBank* bank = NULL;

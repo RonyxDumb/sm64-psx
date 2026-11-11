@@ -29,7 +29,7 @@ class TextureBankTest(unittest.TestCase):
                 items.append((path, header, payload))
 
             listing = folder / "files.txt"
-            listing.write_text("".join(f"{path}\\n" for path, _, _ in items))
+            listing.write_text("".join(f"{path}\n" for path, _, _ in items))
             archive = folder / "archive.bin"
             subprocess.run([sys.executable, str(SCRIPT), str(archive), str(listing)], check=True)
             data = archive.read_bytes()
@@ -61,7 +61,7 @@ class TextureBankTest(unittest.TestCase):
             src = folder / "bad.fulldata"
             src.write_bytes(struct.pack("<HH12x", 16, 16) + bytes(4))
             listing = folder / "input.txt"
-            listing.write_text(str(src) + "\\n")
+            listing.write_text(str(src) + "\n")
             p = subprocess.run(
                 [sys.executable, str(SCRIPT), str(folder / "out.bin"), str(listing)],
                 capture_output=True, text=True,
@@ -71,7 +71,7 @@ class TextureBankTest(unittest.TestCase):
 
     def test_ps1_and_packer_bank_sizes_agree(self):
         runtime = (ROOT / "src/port/psx/gfx_texture_psx.c").read_text()
-        self.assertRegex(runtime, r"#define TEX_BANK_SECTORS 4\\b")
+        self.assertRegex(runtime, r"#define TEX_BANK_SECTORS 4\b")
         self.assertEqual(BANK_BYTES, 4 * SECTOR_BYTES)
 
 
