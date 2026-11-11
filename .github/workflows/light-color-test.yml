@@ -40,7 +40,6 @@ jobs:
 
       - name: Build PlayStation toolchain container
         shell: bash
-        shell: bash
         run: |
           set -euo pipefail
           # Alpine package mirrors can fail transiently while resolving
