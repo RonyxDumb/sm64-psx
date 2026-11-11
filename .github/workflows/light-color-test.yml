@@ -108,7 +108,7 @@ jobs:
             --volume "${{ github.workspace }}:/project" \
             --workdir /project \
             sm64-psx-ci:latest \
-            sh -ec "make VERSION=us LIGHTS_15BIT=${{ matrix.rgb555 }} COLOR=0"
+            sh -ec "chmod +x tools/build/* && make VERSION=us LIGHTS_15BIT=${{ matrix.rgb555 }} COLOR=0"
 
       - name: Check emulator-ready disc files
         shell: bash
