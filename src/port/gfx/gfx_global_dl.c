@@ -119,7 +119,7 @@ void gfx_emit_light_directional1(Light_t* light) {
 
 bool compile_as_ortho = false;
 
-static void gfx_emit_screen_quad_impl(s16 x0, s16 y0, s16 x1, s16 y1, bool flip_v) {
+static void gfx_emit_screen_quad_impl(s16 x0, s16 y0, s16 x1, s16 y1, bool flip_v, bool rotate_dialog_glyph) {
 	/* Restore the caller's projection state after drawing the quad. */
 	bool restore_ortho = !compile_as_ortho;
 	VtxList* list = gfx_alloc_in_global_dl(4 + sizeof(GfxVtx) * 4);
@@ -143,13 +143,22 @@ static void gfx_emit_screen_quad_impl(s16 x0, s16 y0, s16 x1, s16 y1, bool flip_
 		int logical_width = last_tex->rotated ? last_tex->height : last_tex->width;
 		int logical_height = last_tex->rotated ? last_tex->width : last_tex->height;
 		for(int i = 0; i < 4; i++) {
-			/* PS1 polygons exclude the right/bottom edges: use the full
-			 * logical texture extent so the final glyph pixels are sampled. */
-			int u = (i & 2) ? logical_width : 0;
-			int v = (i & 1) ? logical_height : 0;
-			if(flip_v) v = logical_height - v;
-			list->psx[i].u = last_tex->rotated ? v : u;
-			list->psx[i].v = last_tex->rotated ? u : v;
+			if(rotate_dialog_glyph) {
+				/* US dialog glyphs are 16x8 IA4 textures displayed as 8x16.
+				 * The original N64 quad rotates its UV axes; a standard PS1
+				 * sprite stretches the sideways glyph into unreadable symbols.
+				 * This quad has inverted Y endpoints for the UI modelview. */
+				list->psx[i].u = (i & 1) ? 0 : last_tex->width;
+				list->psx[i].v = (i & 2) ? 0 : last_tex->height;
+			} else {
+				/* PS1 polygons exclude the right/bottom edges: use the full
+				 * logical texture extent so the final glyph pixels are sampled. */
+				int u = (i & 2) ? logical_width : 0;
+				int v = (i & 1) ? logical_height : 0;
+				if(flip_v) v = logical_height - v;
+				list->psx[i].u = last_tex->rotated ? v : u;
+				list->psx[i].v = last_tex->rotated ? u : v;
+			}
 		}
 		flags |= PRIM_FLAG_TEXTURED;
 	}
@@ -168,11 +177,16 @@ static void gfx_emit_screen_quad_impl(s16 x0, s16 y0, s16 x1, s16 y1, bool flip_
 }
 
 void gfx_emit_screen_quad(s16 x0, s16 y0, s16 x1, s16 y1) {
-	gfx_emit_screen_quad_impl(x0, y0, x1, y1, false);
+	gfx_emit_screen_quad_impl(x0, y0, x1, y1, false, false);
 }
 
 void gfx_emit_screen_quad_vflip(s16 x0, s16 y0, s16 x1, s16 y1) {
-	gfx_emit_screen_quad_impl(x0, y0, x1, y1, true);
+	gfx_emit_screen_quad_impl(x0, y0, x1, y1, true, false);
+}
+
+/* N64 US dialog fonts are stored sideways (16x8) but drawn as 8x16. */
+void gfx_emit_dialog_glyph(void) {
+	gfx_emit_screen_quad_impl(0, 16, 8, 0, false, true);
 }
 
 void gfx_emit_multiplier(u32 multiplier) {

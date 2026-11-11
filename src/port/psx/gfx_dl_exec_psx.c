@@ -80,26 +80,31 @@ DL_EXEC_ICACHE_FUNC static void between(GfxVtx* dst, const GfxVtx* a, const GfxV
 DL_EXEC_ICACHE_FUNC static void append_poly(Packet* packet, bool is_quad, s32 sxy3, u32 flags, const GfxVtx* vtx) {
 	TexHeader* tex = (TexHeader*) tex_ptr;
 	bool textured = tex && (flags & PRIM_FLAG_TEXTURED);
+	/* N64 G_CC_BLENDRGBFADEA blends the texel into the SHADE-colored
+	 * surface, rather than multiplying the texel by that shade. PS1
+	 * performs RGB modulation; 0x80 is the neutral texture multiplier.
+	 * The decal's separate untextured pass keeps the underlying shade. */
+	bool decal_overlay = textured && (flags & PRIM_FLAG_DECAL);
 	if(textured) {
 		gfx_packet_append(packet, tex->window_cmd);
 	}
-	gfx_packet_append(packet, vtx[0].color.as_u32 | _gp0_polygon(is_quad, false, true, textured, flags & PRIM_FLAG_FORCE_BLEND));
+	gfx_packet_append(packet, (decal_overlay ? 0x00808080 : vtx[0].color.as_u32) | _gp0_polygon(is_quad, false, true, textured, flags & PRIM_FLAG_FORCE_BLEND));
 	gte_storeDataRegM(GTE_SXY0, gfx_packet_skip(packet));
 	if(textured) {
 		gfx_packet_append(packet, vtx[0].uv | (u32) tex->clut_attr << 16);
 	}
-	gfx_packet_append(packet, vtx[1].color.as_u32);
+	gfx_packet_append(packet, decal_overlay ? 0x00808080 : vtx[1].color.as_u32);
 	gte_storeDataRegM(GTE_SXY1, gfx_packet_skip(packet));
 	if(textured) {
 		gfx_packet_append(packet, vtx[1].uv | (u32) tex->page_attr << 16);
 	}
-	gfx_packet_append(packet, vtx[2].color.as_u32);
+	gfx_packet_append(packet, decal_overlay ? 0x00808080 : vtx[2].color.as_u32);
 	gte_storeDataRegM(GTE_SXY2, gfx_packet_skip(packet));
 	if(textured) {
 		gfx_packet_append(packet, vtx[2].uv);
 	}
 	if(is_quad) {
-		gfx_packet_append(packet, vtx[3].color.as_u32);
+		gfx_packet_append(packet, decal_overlay ? 0x00808080 : vtx[3].color.as_u32);
 		gfx_packet_append(packet, sxy3);
 		if(textured) {
 			gfx_packet_append(packet, vtx[3].uv);

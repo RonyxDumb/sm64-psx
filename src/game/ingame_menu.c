@@ -305,7 +305,7 @@ void render_generic_char(u8 c) {
     /* PS1: loading a glyph texture is not enough: emit its quad as well.
      * The native UI matrix handles the dialog opening animation and layout.
      * Y goes from 16 to 0 because its modelview is flipped to PS1 space. */
-    gfx_emit_screen_quad(0, 16, 8, 0);
+    gfx_emit_dialog_glyph();
 #endif
 #endif
 #ifdef RSP_DL

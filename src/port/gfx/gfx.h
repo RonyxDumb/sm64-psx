@@ -159,6 +159,7 @@ void gfx_emit_light_directional0(Light_t* light);
 void gfx_emit_light_directional1(Light_t* light);
 void gfx_emit_screen_quad(s16 x0, s16 y0, s16 x1, s16 y1);
 void gfx_emit_screen_quad_vflip(s16 x0, s16 y0, s16 x1, s16 y1);
+void gfx_emit_dialog_glyph(void);
 void gfx_emit_multiplier(u32 multiplier);
 void gfx_emit_mtx_set(ShortMatrix* mtx_ptr);
 void gfx_emit_mtx_mul(ShortMatrix* mtx_ptr);
