@@ -12,8 +12,12 @@ static Framebuffer fb[2];
  * and shadows. If a busy scene exhausts the fixed 64 KiB command buffer,
  * write the packet here and discard it instead of corrupting RAM. */
 #define PACKET_RESERVE_WORDS 64
+/* Keep 6 KiB of the shared packet pool for HUD, menus and dialog. Large
+ * 3D scenes previously exhausted all 64 KiB and made the HUD disappear
+ * intermittently; 2D packets now have priority without allocating more RAM. */
+#define PACKET_HUD_RESERVE_WORDS 1536
 static u32 discarded_packet[PACKET_RESERVE_WORDS];
-STATIC_ASSERT(PACKET_POOL_LEN > PACKET_RESERVE_WORDS, "packet reserve exceeds GPU command buffer");
+STATIC_ASSERT(PACKET_POOL_LEN > PACKET_RESERVE_WORDS + PACKET_HUD_RESERVE_WORDS, "HUD reserve exceeds GPU command buffer");
 scratchpad static u32* ot;
 scratchpad static u32* next_packet;
 
@@ -89,12 +93,12 @@ void gfx_discard_frame() {
 	awaitOrderingTableClear();
 }
 
-ALWAYS_INLINE Packet gfx_packet_begin() {
+ALWAYS_INLINE static Packet gfx_packet_begin_with_reserve(u32 reserve) {
 	u32* pool_end = fb[selected_fb].packet_pool + PACKET_POOL_LEN;
 	u32* header = next_packet;
-	/* Reserve space before writing any GPU command. Checking only in
-	 * gfx_packet_end() is too late: the overflow has already occurred. */
-	if(header > pool_end - PACKET_RESERVE_WORDS) {
+	/* Reserve room before writing; never let scenery exhaust the final
+	 * 2D packet budget. Each GPU packet itself needs at most 64 words. */
+	if(header > pool_end - reserve) {
 		header = discarded_packet;
 	}
 	return (Packet) {
@@ -102,6 +106,14 @@ ALWAYS_INLINE Packet gfx_packet_begin() {
 		.start = header + 1,
 		.end = header + 1
 	};
+}
+
+ALWAYS_INLINE Packet gfx_packet_begin() {
+	return gfx_packet_begin_with_reserve(PACKET_RESERVE_WORDS + PACKET_HUD_RESERVE_WORDS);
+}
+
+ALWAYS_INLINE Packet gfx_packet_begin_ui() {
+	return gfx_packet_begin_with_reserve(PACKET_RESERVE_WORDS);
 }
 
 ALWAYS_INLINE void gfx_packet_end(Packet packet, u32 ot_z) {

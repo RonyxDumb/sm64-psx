@@ -440,7 +440,9 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		ot_z -= DECAL_Z_BIAS;
 	}
 
-	Packet packet = gfx_packet_begin();
+	/* UI and dialog must survive heavy scenery; reserve the final portion
+	 * of the packet pool for orthographic overlays after the 3D scene. */
+	Packet packet = (is_ortho && !is_2d_background) ? gfx_packet_begin_ui() : gfx_packet_begin();
 	if((flags & PRIM_FLAG_TEXTURED) && (flags & PRIM_FLAG_DECAL)) {
 		append_poly(&packet, v3, sxy3, flags & ~PRIM_FLAG_TEXTURED, storage);
 	}
@@ -587,7 +589,7 @@ DL_EXEC_ICACHE_FUNC static void handle_sprite(u32 cmd) {
 	s32 x = ((u32) cmd << 20) >> 20;
 	s32 y = ((u32) cmd << 8) >> 20;
 	u16 z = is_2d_background? BACKGROUND_Z: (foreground_z? --foreground_z: 0);
-	Packet packet = gfx_packet_begin();
+	Packet packet = !is_2d_background ? gfx_packet_begin_ui() : gfx_packet_begin();
 	TexHeader* tex = tex_ptr;
 	gfx_packet_append(&packet, tex->window_cmd);
 	gfx_packet_append(&packet, gp0_texpage(tex->page_attr, true, false));

@@ -46,6 +46,7 @@ typedef struct {
 } Packet;
 
 Packet gfx_packet_begin();
+Packet gfx_packet_begin_ui();
 
 ALWAYS_INLINE u32* gfx_packet_skip(Packet* packet) {
 	return packet->end++;

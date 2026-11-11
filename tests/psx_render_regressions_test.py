@@ -65,6 +65,22 @@ class RendererRegressionTests(unittest.TestCase):
         self.assertIn("sort_z = depth_sum / (v3 ? 4 : 3);", renderer)
         self.assertIn("if(!is_ortho && (flags & PRIM_FLAG_TITLE_LOGO))", renderer)
 
+    def test_power_meter_uses_one_consistent_coordinate_system(self):
+        hud = (ROOT / "src/game/hud.c").read_text()
+        self.assertIn("gfx_emit_screen_quad(sPowerMeterHUD.x, sPowerMeterHUD.y + 32,", hud)
+        self.assertIn("gfx_emit_screen_quad(sPowerMeterHUD.x + 32, sPowerMeterHUD.y + 32,", hud)
+        self.assertIn("gfx_emit_sprite(sPowerMeterHUD.x + 16, YRES - sPowerMeterHUD.y - 32 + 16)", hud)
+        self.assertIn("if (sPowerMeterHUD.animation == POWER_METER_HIDDEN) {\n        return;", hud)
+        self.assertNotIn("gfx_emit_screen_quad_vflip(sPowerMeterHUD.x", hud)
+
+    def test_hud_packets_are_reserved_from_3d_geometry(self):
+        pool = (ROOT / "src/port/psx/gfx_framebuffers_psx.c").read_text()
+        renderer = (ROOT / "src/port/psx/gfx_dl_exec_psx.c").read_text()
+        self.assertIn("#define PACKET_HUD_RESERVE_WORDS 1536", pool)
+        self.assertIn("PACKET_RESERVE_WORDS + PACKET_HUD_RESERVE_WORDS", pool)
+        self.assertIn("gfx_packet_begin_ui()", pool)
+        self.assertIn("is_ortho && !is_2d_background", renderer)
+
     def test_lakitu_bridge_wait_has_a_guard(self):
         logic = (ROOT / "src/game/behaviors/camera_lakitu.inc.c").read_text()
         self.assertIn("o->oTimer <= 30 || gMarioState->action != ACT_READING_NPC_DIALOG", logic)

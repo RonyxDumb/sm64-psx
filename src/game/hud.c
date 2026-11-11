@@ -116,9 +116,12 @@ void render_power_meter_health_segment(s16 numHealthWedges) {
 void render_dl_power_meter(s16 numHealthWedges) {
     gfx_emit_env_color_alpha_full(0xFFFFFF);
     gfx_emit_tex(segmented_to_virtual(texture_power_meter_left_side));
-    gfx_emit_screen_quad_vflip(sPowerMeterHUD.x, YRES - sPowerMeterHUD.y - 32, sPowerMeterHUD.x + 32, YRES - sPowerMeterHUD.y + 32);
+    /* create_dl_ortho_matrix flips Y for geometry but gfx_emit_sprite
+     * accepts raw top-left GPU coordinates. Convert the frame's Y edges
+     * back into that modelview space so they line up with the health sprite. */
+    gfx_emit_screen_quad(sPowerMeterHUD.x, sPowerMeterHUD.y + 32, sPowerMeterHUD.x + 32, sPowerMeterHUD.y - 32);
     gfx_emit_tex(segmented_to_virtual(texture_power_meter_right_side));
-    gfx_emit_screen_quad_vflip(sPowerMeterHUD.x + 32, YRES - sPowerMeterHUD.y - 32, sPowerMeterHUD.x + 64, YRES - sPowerMeterHUD.y + 32);
+    gfx_emit_screen_quad(sPowerMeterHUD.x + 32, sPowerMeterHUD.y + 32, sPowerMeterHUD.x + 64, sPowerMeterHUD.y - 32);
     if(numHealthWedges != 0) {
         render_power_meter_health_segment(numHealthWedges);
     }
@@ -226,8 +229,10 @@ void render_hud_power_meter(void) {
         handle_power_meter_actions(shownHealthWedges);
     }
 
+    /* Do not emit off-screen sprites when hidden: negative Y coordinates
+     * can wrap in PS1 GPU packets and reappear as damaged HUD fragments. */
     if (sPowerMeterHUD.animation == POWER_METER_HIDDEN) {
-        //return;
+        return;
     }
 
     switch (sPowerMeterHUD.animation) {
@@ -244,7 +249,11 @@ void render_hud_power_meter(void) {
             break;
     }
 
-    render_dl_power_meter(shownHealthWedges);
+    /* The original hidden animation moves Y beyond the screen before
+     * marking the state hidden. Keep its last frames off the GPU too. */
+    if (sPowerMeterHUD.y < YRES + 32) {
+        render_dl_power_meter(shownHealthWedges);
+    }
 
     sPowerMeterVisibleTimer += 1;
 }
