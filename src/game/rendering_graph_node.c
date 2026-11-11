@@ -576,6 +576,11 @@ static void geo_process_background(struct GraphNodeBackground* node) {
 			geo_append_display_list(list, node->fnNode.node.flags >> 8);
 		}
 	}
+#ifdef TARGET_PSX
+	else {
+		gfx_draw_background_color(node->background);
+	}
+#endif
 	if(node->fnNode.node.children != NULL) {
 		geo_process_node_and_siblings(node->fnNode.node.children);
 	}

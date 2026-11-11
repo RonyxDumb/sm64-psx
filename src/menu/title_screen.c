@@ -179,6 +179,11 @@ s32 intro_regular(void) {
         // calls level ID 100 (or 101 adding level select bool value)
         // defined in level_intro_mario_head_regular JUMP_IF commands
         // 100 is File Select - 101 is Level Select
+#ifdef TARGET_PSX
+        if (gPlayer1Controller->buttonDown & Z_TRIG) {
+            gDebugLevelSelect = TRUE;
+        }
+#endif
         level = 100 + gDebugLevelSelect;
 #ifndef VERSION_JP
         sPlayMarioGreeting = TRUE;

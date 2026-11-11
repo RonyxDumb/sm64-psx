@@ -109,6 +109,10 @@ SECTIONS {
 		_bssEnd = .;
 	} > APP_RAM
 
+	_heapStart = ALIGN(_bssEnd, 8);
+	_stackBottom = ORIGIN(APP_RAM) + LENGTH(APP_RAM);
+	_stackTop = _stackBottom + 0x8000 - 16;
+
 	/* Dummy sections */
 
 	.dummy (NOLOAD) : {

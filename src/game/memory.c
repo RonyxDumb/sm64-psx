@@ -108,18 +108,21 @@ void *virtual_to_segmented(u32 segment, const void *addr) {
 void main_pool_init(void* start, void* end) {
 	main_pool_head_left = (struct MainPoolBlock*) start;
 	main_pool_head_right = (struct MainPoolBlock*) end - 1;
+	main_pool_head_left->prev = NULL;
+	main_pool_head_right->prev = NULL;
 	main_pool_start_addr = start;
 	main_pool_end_addr = end;
+	gMainPoolState = NULL;
 }
 
 /**
  * Allocate a block of memory from the pool of given size, and from the
  * specified side of the pool (MEMORY_POOL_LEFT or MEMORY_POOL_RIGHT).
- * If there is not enough space, return NULL.
  */
 void *main_pool_alloc(u32 size, u32 side) {
 	size = ALIGNPTR(size);
-	assertmf(main_pool_available() >= size, "main pool full", "required %d bytes, only %d available\n", size, main_pool_available());
+	assertmf(size > 0 && main_pool_available() >= size, "main pool full",
+	         "required %u bytes, only %u available\n", size, main_pool_available());
 	if(side == MEMORY_POOL_LEFT) {
 		struct MainPoolBlock* new_block = main_pool_head_left;
 		main_pool_head_left = (struct MainPoolBlock*) ((u8*) (main_pool_head_left + 1) + size);
@@ -141,9 +144,9 @@ void *main_pool_alloc(u32 size, u32 side) {
  * Return the amount of free space left in the pool.
  */
 u32 main_pool_free(void* addr) {
-	if(addr == main_pool_head_left->prev + 1) {
+	if(main_pool_head_left->prev && addr == main_pool_head_left->prev + 1) {
 		main_pool_head_left = main_pool_head_left->prev;
-	} else if(addr == main_pool_head_right + 1) {
+	} else if(main_pool_head_right->prev && addr == main_pool_head_right + 1) {
 		main_pool_head_right = main_pool_head_right->prev;
 	} else {
 		assert(false);
@@ -161,9 +164,11 @@ void* main_pool_realloc(void* addr, u32 size) {
 	size = ALIGNPTR(size);
 	struct MainPoolBlock* prev = main_pool_head_left->prev;
 	assert(addr == prev + 1);
-	main_pool_head_left = (struct MainPoolBlock*) ((u8*) (prev + 1) + size);
+	uintptr_t end = (uintptr_t) addr + size;
+	assertmf(end < (uintptr_t) main_pool_head_right, "main pool full",
+	         "cannot resize main pool block to %u bytes\n", size);
+	main_pool_head_left = (struct MainPoolBlock*) end;
 	main_pool_head_left->prev = prev;
-	assert(main_pool_head_left + 1 <= main_pool_head_right);
 	return addr;
 }
 
@@ -172,8 +177,9 @@ void* main_pool_realloc(void* addr, u32 size) {
  * pool.
  */
 u32 main_pool_available(void) {
-	assert((uintptr_t) (main_pool_head_left + 1) < (uintptr_t) main_pool_head_right);
-	return (uintptr_t) main_pool_head_right - (uintptr_t) (main_pool_head_left + 1);
+	uintptr_t first = (uintptr_t) (main_pool_head_left + 2);
+	uintptr_t last = (uintptr_t) main_pool_head_right;
+	return last > first ? last - first : 0;
 }
 
 /**
@@ -181,11 +187,9 @@ u32 main_pool_available(void) {
  * in the pool.
  */
 u32 main_pool_push_state(void) {
-	struct MainPoolState* prevState = gMainPoolState;
-	gMainPoolState = main_pool_alloc(sizeof(*gMainPoolState), MEMORY_POOL_LEFT);
-	gMainPoolState->listHeadL = main_pool_head_left;
-	gMainPoolState->listHeadR = main_pool_head_right;
-	gMainPoolState->prev = prevState;
+	struct MainPoolState saved = {main_pool_head_left, main_pool_head_right, gMainPoolState};
+	gMainPoolState = main_pool_alloc(sizeof(saved), MEMORY_POOL_LEFT);
+	*gMainPoolState = saved;
 	return main_pool_available();
 }
 
@@ -284,10 +288,11 @@ struct AllocOnlyPool *alloc_only_pool_init(u32 size, u32 side) {
  */
 void* alloc_only_pool_alloc(struct AllocOnlyPool* pool, s32 size) {
 	size = ALIGNPTR(size);
-	assert(size > 0);
 	void* addr = pool->free_ptr;
-	pool->free_ptr += size;
-	assert((uintptr_t) pool->free_ptr - (uintptr_t) pool < pool->size);
+	u32 used = (uintptr_t) addr - (uintptr_t) (pool + 1);
+	assertmf(size > 0 && (u32) size <= pool->size - used, "level graph pool full",
+	         "required %d bytes, only %u available\n", size, pool->size - used);
+	pool->free_ptr = (u8*) addr + size;
 	return addr;
 }
 
@@ -484,6 +489,7 @@ u32 setup_mario_anims(struct DmaHandlerList *list, void *segment_start, UNUSED v
 	u32 just_table_size = ((struct DmaTable*) seg_buf)->count * sizeof(struct OffsetSizePair) + sizeof(struct DmaTable);
 
 	sendVRAMData(seg_buf + just_table_size, VRAM_X, VRAM_Y, VRAM_WIDTH, VRAM_HEIGHT);
+	waitForDMADone();
 
 	seg_buf = main_pool_realloc(seg_buf, just_table_size);
 	list->dmaTable = (struct DmaTable*) seg_buf;

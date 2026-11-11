@@ -29,7 +29,7 @@ typedef void (*Function)(void);
 // These are defined by the linker script. Note that these are not variables,
 // they are virtual symbols whose location matches their value. The simplest way
 // to turn them into pointers is to declare them as arrays.
-extern char _sdataStart[], _bssStart[], _bssEnd[];
+extern char _bssStart[], _bssEnd[], _heapStart[], _stackBottom[];
 
 extern const Function _preinitArrayStart[], _preinitArrayEnd[];
 extern const Function _initArrayStart[], _initArrayEnd[];
@@ -37,14 +37,13 @@ extern const Function _finiArrayStart[], _finiArrayEnd[];
 
 /* Heap API (used by malloc) */
 
-static uintptr_t _heapEnd   = (uintptr_t) _bssEnd;
-static uintptr_t _heapLimit = 0x80200000; // TODO: add a way to change this
+static uintptr_t _heapEnd = (uintptr_t) _heapStart;
 
 void *sbrk(ptrdiff_t incr) {
 	uintptr_t currentEnd = _heapEnd;
 	uintptr_t newEnd     = _align(currentEnd + incr, 8);
 
-	if (newEnd >= _heapLimit)
+	if (newEnd < (uintptr_t) _heapStart || newEnd > (uintptr_t) _stackBottom)
 		return 0;
 
 	_heapEnd = newEnd;
@@ -55,7 +54,21 @@ void *sbrk(ptrdiff_t incr) {
 
 [[gnu::noinline]] int main(int argc, const char **argv);
 
-int _start(int argc, const char **argv) {
+__asm__(
+	".pushsection .text.startup._start,\"ax\",@progbits\n"
+	".set push\n"
+	".set noreorder\n"
+	".globl _start\n"
+	"_start:\n"
+	"la $sp, _stackTop\n"
+	"la $gp, _gp\n"
+	"j psx_start\n"
+	"nop\n"
+	".set pop\n"
+	".popsection\n"
+);
+
+[[gnu::used, gnu::externally_visible]] int psx_start(int argc, const char **argv) {
 	// Disable interrupts at the COP0 side.
 	cop0_setReg(COP0_SR, COP0_SR_CU0 | COP0_SR_CU2);
 
@@ -66,11 +79,6 @@ int _start(int argc, const char **argv) {
 	DMA_DPCR = 0;
 	DMA_DICR = DMA_DICR_CH_STAT_BITMASK;
 
-	// Set $gp to point to the middle of the .sdata/.sbss sections, ensuring
-	// variables placed in those sections can be quickly accessed. See the
-	// linker script for more details.
-	__asm__ volatile("la $gp, _gp\n");
-
 	// allow the pcsx-redux functions to not crash
 #ifndef IDE
 	asm volatile(
@@ -78,12 +86,6 @@ int _start(int argc, const char **argv) {
 		"sw $v0, 0x1F80101C\n"
 		::: "$v0"
 	);
-#endif
-
-#ifdef RAM_16MB
-	__asm__ volatile("la $sp, 0x80fffff0\n");
-#else
-	__asm__ volatile("la $sp, 0x807ffff0\n");
 #endif
 
 	// clear the scratchpad

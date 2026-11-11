@@ -243,6 +243,7 @@ void create_dl_ortho_matrix(void) {
     mtx->t[1] = SCREEN_HEIGHT;
     gfx_emit_mtx_set(mtx);
     gfx_emit_set_ortho(true);
+    gfx_emit_set_background(false);
 }
 #endif
 

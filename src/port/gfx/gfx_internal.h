@@ -26,18 +26,16 @@ STATIC_ASSERT(sizeof(TexHeader) == 20, "TexHeader must match the layout output b
 #define Z_BUCKETS 2000 // for performance, should be equal to MAX_Z divided by a power of two
 #define FOREGROUND_BUCKETS 32
 #define BACKGROUND_Z (Z_BUCKETS + FOREGROUND_BUCKETS)
+#define UI_Z 1
 #define OT_LEN 2048
 #define PACKET_POOL_LEN 16384
-
-typedef struct {
-	u32 ot[OT_LEN];
-	u32 packet_pool[PACKET_POOL_LEN];
-	u32 frame_start_packet[8];
-} Framebuffer;
 
 void gfx_init_buffers();
 void gfx_swap_buffers(bool vsync_30fps);
 void gfx_discard_frame();
+#ifdef TARGET_PSX
+void gfx_draw_background_color(u16 color);
+#endif
 
 typedef struct {
 	u32* header;

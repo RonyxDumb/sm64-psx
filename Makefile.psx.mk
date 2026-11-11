@@ -639,7 +639,8 @@ $(ELF): $(SEG_FILES_WITH_GEO) $(O_FILES) $(GODDARD_O_FILES) $(LIBC_O_FILES) $(BU
 
 $(EXE): $(ELF)
 >	@$(PRINT) "$(GREEN)Converting to executable: $(BLUE)$@ $(NO_COL)\n"
->	$(V)$(PYTHON) ps1-bare-metal/convertExecutable.py $< $@
+>	$(V)stack_top=$$($(NM) $< | awk '$$3 == "_stackTop" {print "0x" $$1}'); \
+>	test -n "$$stack_top" && $(PYTHON) ps1-bare-metal/convertExecutable.py --set-sp "$$stack_top" $< $@
 
 tags: $(C_FILES)
 >	@ctags $^

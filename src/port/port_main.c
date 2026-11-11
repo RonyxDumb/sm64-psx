@@ -22,7 +22,11 @@
 OSMesg gMainReceivedMesg;
 OSMesgQueue gSIEventMesgQueue;
 
+#if defined(TARGET_PSX) && !defined(DEBUG)
+s8 gDebugLevelSelect = false;
+#else
 s8 gDebugLevelSelect = true;
+#endif
 s8 gShowProfiler = false;
 s8 gShowDebugText = false;
 
@@ -42,15 +46,17 @@ static void save_config(void) {
 	ALIGNED8 static u8 main_pool[DOUBLE_SIZE_ON_64_BIT(0x200000)];
 #else
 	#define close_requested false
-	#if defined(BIG_RAM) && !defined(BENCH)
-		ALIGNED8 static u8 main_pool[DOUBLE_SIZE_ON_64_BIT(0x200000)];
-	#else
-		ALIGNED8 static u8 main_pool[DOUBLE_SIZE_ON_64_BIT(0xC0000)]; // the original size was 0x165000 (~1.4 MiB)- carefully lower it as much as possible
-	#endif
+	extern char _heapStart[], _stackBottom[];
 #endif
 
 [[gnu::noinline]] int main(UNUSED int argc, UNUSED char *argv[]) {
+#ifdef TARGET_PSX
+	const size_t pool_size = (uintptr_t) _stackBottom - (uintptr_t) _heapStart;
+	u8* main_pool = sbrk(pool_size);
+	main_pool_init(main_pool, main_pool + pool_size);
+#else
 	main_pool_init(main_pool, (u8*) main_pool + sizeof(main_pool));
+#endif
 	gEffectsMemoryPool = mem_pool_init(DOUBLE_SIZE_ON_64_BIT(0x4000), MEMORY_POOL_LEFT);
 
 #ifdef USE_CONFIG

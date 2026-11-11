@@ -37,7 +37,7 @@ void gfx_backend_init() {
 }
 
 void gfx_fade_to_color(Color color, u8 alpha) {
-	Packet packet = gfx_packet_begin();
+	Packet packet = gfx_packet_begin_ui();
 	gfx_packet_append(&packet, gp0_texpage(gp0_page(0, 0, GP0_BLEND_SUBTRACT, 0), true, false));
 	gfx_packet_append(&packet, (u32) alpha << 16 | (u32) alpha << 8 | alpha | gp0_rectangle(false, true, true));
 	gfx_packet_append(&packet, gp0_xy(0, 0));
@@ -47,4 +47,15 @@ void gfx_fade_to_color(Color color, u8 alpha) {
 	gfx_packet_append(&packet, gp0_xy(0, 0));
 	gfx_packet_append(&packet, gp0_xy(XRES, YRES));
 	gfx_packet_end(packet, 0);
+}
+
+void gfx_draw_background_color(u16 color) {
+	u8 r = ((color >> 11) & 31) * 255 / 31;
+	u8 g = ((color >> 6) & 31) * 255 / 31;
+	u8 b = ((color >> 1) & 31) * 255 / 31;
+	Packet packet = gfx_packet_begin();
+	gfx_packet_append(&packet, gp0_rgb(r, g, b) | gp0_rectangle(false, true, false));
+	gfx_packet_append(&packet, gp0_xy(0, 0));
+	gfx_packet_append(&packet, gp0_xy(XRES, YRES));
+	gfx_packet_end(packet, BACKGROUND_Z + 1);
 }

@@ -35,7 +35,7 @@ void abort(void);
 long strtol(const char *str, char **str_end, int base);
 long long strtoll(const char *str, char **str_end, int base);
 
-//void *sbrk(ptrdiff_t incr);
+void *sbrk(ptrdiff_t incr);
 
 #ifdef TARGET_PC
 void *malloc(size_t size);

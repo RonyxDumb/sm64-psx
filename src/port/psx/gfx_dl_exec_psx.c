@@ -30,13 +30,11 @@ scratchpad static Color env_color;
 scratchpad static bool is_ortho;
 static bool is_2d_background;
 static bool texture_gen_enabled;
-static u8 foreground_z;
 
 void gfx_reset_dl_exec() {
 	tex_ptr = NULL;
 	is_2d_background = true;
 	texture_gen_enabled = false;
-	foreground_z = FOREGROUND_BUCKETS;
 	env_color.as_u32 = 0xFFFFFFFF;
 	is_ortho = false;
 	gfx_modelview_identity();
@@ -195,7 +193,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 	u32 gte_flags;
 	u32 depth_sum = 0;
 	if(is_ortho) {
-		z = is_2d_background? BACKGROUND_Z: (foreground_z? --foreground_z: 0);
+		z = is_2d_background ? BACKGROUND_Z : UI_Z;
 		min_z = z;
 		gte_flags = 0;
 		gte_setControlReg(GTE_RT31RT32, 0);
@@ -451,7 +449,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 	if(!is_ortho && (flags & PRIM_FLAG_TITLE_LOGO)) {
 		sort_z = depth_sum / (v3 ? 4 : 3);
 	}
-	u32 ot_z = sort_z / (MAX_Z / Z_BUCKETS) + FOREGROUND_BUCKETS;
+	u32 ot_z = is_ortho ? z : sort_z / (MAX_Z / Z_BUCKETS) + FOREGROUND_BUCKETS;
 	/* The cap emblem and other decals sit on surfaces with almost
 	 * identical depth. Draw them slightly nearer to avoid hiding the M. */
 	if((flags & PRIM_FLAG_DECAL) && ot_z > FOREGROUND_BUCKETS + DECAL_Z_BIAS) {
@@ -606,7 +604,7 @@ DL_EXEC_ICACHE_FUNC static void set_light_n64(Light_t* n64light, u32 light_idx) 
 DL_EXEC_ICACHE_FUNC static void handle_sprite(u32 cmd) {
 	s32 x = ((u32) cmd << 20) >> 20;
 	s32 y = ((u32) cmd << 8) >> 20;
-	u16 z = is_2d_background? BACKGROUND_Z: (foreground_z? --foreground_z: 0);
+	u16 z = is_2d_background ? BACKGROUND_Z : UI_Z;
 	Packet packet = !is_2d_background ? gfx_packet_begin_ui() : gfx_packet_begin();
 	TexHeader* tex = tex_ptr;
 	gfx_packet_append(&packet, tex->window_cmd);

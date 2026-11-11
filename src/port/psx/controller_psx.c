@@ -107,18 +107,23 @@ static void selectPort(int port) {
 	}
 }
 
-static uint8_t exchangeByte(uint8_t value) {
-	// Wait until the interface is ready to accept a byte to send, then wait for
-	// it to finish receiving the byte sent by the device.
-	while (!(SIO_STAT(0) & SIO_STAT_TX_NOT_FULL))
-		__asm__ volatile inline("");
+static bool waitForSerial(u16 status) {
+	for (int timeout = DSR_TIMEOUT; timeout > 0; timeout -= 10) {
+		if (SIO_STAT(0) & status)
+			return true;
+		delayMicroseconds(10);
+	}
+	return false;
+}
 
+static bool exchangeByte(uint8_t value, uint8_t* response) {
+	if (!waitForSerial(SIO_STAT_TX_NOT_FULL))
+		return false;
 	SIO_DATA(0) = value;
-
-	while (!(SIO_STAT(0) & SIO_STAT_RX_NOT_EMPTY))
-		__asm__ volatile inline("");
-
-	return SIO_DATA(0);
+	if (!waitForSerial(SIO_STAT_RX_NOT_EMPTY))
+		return false;
+	*response = SIO_DATA(0);
+	return true;
 }
 
 static int exchangePacket(
@@ -134,25 +139,18 @@ static int exchangePacket(
 
 	int respLength = 0;
 
-	// Send the address byte and wait for the device to respond with a pulse on
-	// the DSR line. If no response is received assume no device is connected,
-	// otherwise make sure the serial interface's data buffer is empty to
-	// prepare for the actual packet transfer.
-	SIO_DATA(0) = address;
-
-	if (waitForAcknowledge(DSR_TIMEOUT)) {
-		while (SIO_STAT(0) & SIO_STAT_RX_NOT_EMPTY)
-			SIO_DATA(0);
-
+	// A single byte clocks the address reply. Some emulators keep RX ready
+	// asserted until the following command, so reading until it clears hangs.
+	uint8_t addressReply;
+	if (exchangeByte(address, &addressReply) && waitForAcknowledge(DSR_TIMEOUT)) {
 		// Send and receive the packet simultaneously one byte at a time,
 		// padding it with zeroes if the packet we are receiving is longer than
 		// the data being sent.
 		while (respLength < maxRespLength) {
-			if (reqLength > 0) {
-				*(response++) = exchangeByte(*(request++));
-				reqLength--;
-			} else {
-				*(response++) = exchangeByte(0);
+			uint8_t value = respLength < reqLength ? request[respLength] : 0;
+			if (!exchangeByte(value, &response[respLength])) {
+				respLength = 0;
+				break;
 			}
 
 			respLength++;
@@ -305,7 +303,7 @@ void controller_backend_read(OSContPad* pad, u32 port) {
 	//}
 	pad->errnum = 0;
 
-	static u8 last_buttons = 0;
+	static u16 last_buttons = 0;
 	if((buttons & PSX_BTN_R2) && !(last_buttons & PSX_BTN_R2)) {
 		debug_processed_poly_count = 0;
 		gShowDebugText = !gShowDebugText;

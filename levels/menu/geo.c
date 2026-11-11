@@ -154,10 +154,18 @@ const GeoLayout geo_menu_file_select_strings_and_menu_cursor[] = {
       GEO_OPEN_NODE(),
          GEO_CAMERA_FRUSTUM(45, 100, 25000),
          GEO_OPEN_NODE(),
+#ifdef TARGET_PSX
+            // Scale the view uniformly so the 20,000-unit file cards fit the PS1 depth range.
+            GEO_SCALE(0, 16384),
+            GEO_OPEN_NODE(),
+#endif
             GEO_CAMERA(0, 0, 0, 1000, 0, 0, 0, 0x00000000),
             GEO_OPEN_NODE(),
                GEO_RENDER_OBJ(),
             GEO_CLOSE_NODE(),
+#ifdef TARGET_PSX
+            GEO_CLOSE_NODE(),
+#endif
          GEO_CLOSE_NODE(),
       GEO_CLOSE_NODE(),
       GEO_ZBUFFER(0),
