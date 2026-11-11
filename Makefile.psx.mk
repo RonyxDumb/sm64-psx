@@ -486,13 +486,13 @@ HARDCODED_SEGMENTS := -Wl,--defsym=_goddardSegmentRomStart=0 -Wl,--defsym=_godda
 
 $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt: $(TOOLS_DIR)/build/makextfiles $(BUILD_DIR)/ext_files_sections_noscriptgeo.txt
 >	$(V)$(TOOLS_DIR)/build/makextfiles $(BUILD_DIR)/ext_files_sections_noscriptgeo.txt $(BUILD_DIR)/ext_files_noscriptgeo.dat $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt.tmp
->	@rm -f $(BUILD_DIR)/ext_files_noscriptgeo.dat
+>	@# Keep temporary .dat: under recursive parallel make, its removal races with the build.
 >	@echo $(HARDCODED_SEGMENTS) >> $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt.tmp
 >	@mv $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt.tmp $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt
 
 $(BUILD_DIR)/ext_files_defsym_plusmenu.txt: $(TOOLS_DIR)/build/makextfiles $(BUILD_DIR)/ext_files_sections_plusmenu.txt
 >	$(V)$(TOOLS_DIR)/build/makextfiles $(BUILD_DIR)/ext_files_sections_plusmenu.txt $(BUILD_DIR)/ext_files_plusmenu.dat $(BUILD_DIR)/ext_files_defsym_plusmenu.txt.tmp
->	@rm -f $(BUILD_DIR)/ext_files_plusmenu.dat
+>	@# Keep temporary .dat: under recursive parallel make, its removal races with the build.
 >	@echo $(HARDCODED_SEGMENTS) >> $(BUILD_DIR)/ext_files_defsym_plusmenu.txt.tmp
 >	@mv $(BUILD_DIR)/ext_files_defsym_plusmenu.txt.tmp $(BUILD_DIR)/ext_files_defsym_plusmenu.txt
 
