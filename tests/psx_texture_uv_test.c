@@ -7,7 +7,7 @@ static void test_period(unsigned size) {
     for (unsigned i = 0; i < sizeof(samples) / sizeof(samples[0]); ++i) {
         int v = samples[i];
         unsigned char coord = gfx_wrap_texel_psx(v, size);
-        assert((coord % size) == ((v % (int) size + (int) size) % (int) size));
+        assert((coord % size) == (unsigned)((v % (int) size + (int) size) % (int) size));
         assert((coord % size) == (gfx_wrap_texel_psx(v + (int) size, size) % size));
         assert(coord == gfx_wrap_texel_psx(v + 256, size));
     }
