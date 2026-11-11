@@ -119,7 +119,7 @@ void gfx_emit_light_directional1(Light_t* light) {
 
 bool compile_as_ortho = false;
 
-void gfx_emit_screen_quad(s16 x0, s16 y0, s16 x1, s16 y1) {
+static void gfx_emit_screen_quad_impl(s16 x0, s16 y0, s16 x1, s16 y1, bool flip_v) {
 	/* Restore the caller's projection state after drawing the quad. */
 	bool restore_ortho = !compile_as_ortho;
 	VtxList* list = gfx_alloc_in_global_dl(4 + sizeof(GfxVtx) * 4);
@@ -137,15 +137,23 @@ void gfx_emit_screen_quad(s16 x0, s16 y0, s16 x1, s16 y1) {
 	flags |= PRIM_FLAG_ENV_ALPHA;
 #endif
 	if(last_tex) {
-		list->psx[0].u = 0;
-		list->psx[0].v = 0;
-		list->psx[1 + last_tex->rotated].u = 0;
-		list->psx[1 + last_tex->rotated].v = last_tex->height - 1;
-		list->psx[2 - last_tex->rotated].u = last_tex->width - 1;
-		list->psx[2 - last_tex->rotated].v = 0;
-		list->psx[3].u = last_tex->width - 1;
-		list->psx[3].v = last_tex->height - 1;
+		/* Convert logical (top-left) UI coordinates to packed texture space.
+		 * The packer transposes 32x64 images; an optional vertical flip must
+		 * operate in logical space, before swapping the UV axes. */
+		int logical_width = last_tex->rotated ? last_tex->height : last_tex->width;
+		int logical_height = last_tex->rotated ? last_tex->width : last_tex->height;
+		for(int i = 0; i < 4; i++) {
+			int u = (i & 2) ? logical_width - 1 : 0;
+			int v = (i & 1) ? logical_height - 1 : 0;
+			if(flip_v) v = logical_height - 1 - v;
+			list->psx[i].u = last_tex->rotated ? v : u;
+			list->psx[i].v = last_tex->rotated ? u : v;
+		}
 		flags |= PRIM_FLAG_TEXTURED;
+	}
+	for(int i = 0; i < 4; i++) {
+		list->psx[i].z = 0;
+		list->psx[i].color.as_u32 = 0xFFFFFFFF;
 	}
 	*(global_dl++) = DL_PACK_OP(DL_CMD_VTX) | DL_PACK_PTR(list->psx);
 	if(restore_ortho) {
@@ -155,6 +163,14 @@ void gfx_emit_screen_quad(s16 x0, s16 y0, s16 x1, s16 y1) {
 	if(restore_ortho) {
 		gfx_emit_set_ortho(false);
 	}
+}
+
+void gfx_emit_screen_quad(s16 x0, s16 y0, s16 x1, s16 y1) {
+	gfx_emit_screen_quad_impl(x0, y0, x1, y1, false);
+}
+
+void gfx_emit_screen_quad_vflip(s16 x0, s16 y0, s16 x1, s16 y1) {
+	gfx_emit_screen_quad_impl(x0, y0, x1, y1, true);
 }
 
 void gfx_emit_multiplier(u32 multiplier) {

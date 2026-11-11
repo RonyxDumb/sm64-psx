@@ -24,11 +24,13 @@ scratchpad static GfxVtx* vertices;
 scratchpad static Color env_color;
 scratchpad static bool is_ortho;
 static bool is_2d_background;
+static bool texture_gen_enabled;
 static u8 foreground_z;
 
 void gfx_reset_dl_exec() {
 	tex_ptr = NULL;
 	is_2d_background = true;
+	texture_gen_enabled = false;
 	foreground_z = FOREGROUND_BUCKETS;
 	env_color.as_u32 = 0xFFFFFFFF;
 	is_ortho = false;
@@ -118,6 +120,18 @@ enum {
 	V_COUNT,
 };
 
+/* PS1 has no N64 reflection mapper. Derive a stable, per-vertex metal
+ * lookup from the original model normals; generated coordinates must be
+ * calculated at draw time because normal and metal Mario share vertex lists. */
+DL_EXEC_ICACHE_FUNC static void set_reflection_uv(GfxVtx* dst, const GfxVtx* src, const TexHeader* tex) {
+	int nx = (s8) src->color.r + 128;
+	int ny = (s8) src->color.g + 128;
+	int u = nx * ((tex->rotated ? tex->height : tex->width) - 1) / 255;
+	int v = ny * ((tex->rotated ? tex->width : tex->height) - 1) / 255;
+	dst->u = tex->rotated ? v : u;
+	dst->v = tex->rotated ? u : v;
+}
+
 DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, const GfxVtx* v2, const GfxVtx* v3, u32 flags, GfxVtx* storage, u32 level) {
 	u32 zuv0 = v0->zuv;
 	u32 zuv1 = v1->zuv;
@@ -131,6 +145,20 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 	gte_loadDataRegM(GTE_VXY2, (const u32*) &v2->xy);
 	gte_setDataReg(GTE_VZ2, zuv2);
 	storage[2].zuv = zuv2;
+
+	/* Apply inherited metal texturing even to shared geometry that was
+	 * originally compiled in the normal/untextured Mario material. */
+	if(level == 0 && texture_gen_enabled && tex_ptr) {
+		const TexHeader* tex = (const TexHeader*) tex_ptr;
+		flags |= PRIM_FLAG_TEXTURED;
+		set_reflection_uv(&storage[0], v0, tex);
+		set_reflection_uv(&storage[1], v1, tex);
+		set_reflection_uv(&storage[2], v2, tex);
+		if(v3) {
+			/* The fourth vertex is copied below after projection. */
+			set_reflection_uv(&storage[3], v3, tex);
+		}
+	}
 
 #ifdef PRIM_FLAG_ENV_ALPHA
 	if((flags & PRIM_FLAG_ENV_ALPHA) && env_alpha.cmd < ALPHA_OPAQUE) {
@@ -223,7 +251,13 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 			gte_setDataReg(GTE_VZ0, zuv3);
 			gte_commandNoNop(GTE_CMD_RTPS | GTE_SF);
 
-			storage[3].zuv = zuv3;
+			/* Preserve the metal lookup UV computed above instead of
+			 * replacing it with the original vertex's untextured UV. */
+			if(!(level == 0 && texture_gen_enabled && tex_ptr)) {
+				storage[3].zuv = zuv3;
+			} else {
+				storage[3].z = v3->z;
+			}
 			gte_storeDataRegM(GTE_VXY0, (u32*) &storage[3].xy);
 
 			// if there was any error in rtps, cull it
@@ -375,6 +409,11 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 	}
 
 	u32 ot_z = z / (MAX_Z / Z_BUCKETS) + FOREGROUND_BUCKETS;
+	/* The cap emblem and other decals sit on surfaces with almost
+	 * identical depth. Draw them slightly nearer to avoid hiding the M. */
+	if((flags & PRIM_FLAG_DECAL) && ot_z > FOREGROUND_BUCKETS + DECAL_Z_BIAS) {
+		ot_z -= DECAL_Z_BIAS;
+	}
 
 	Packet packet = gfx_packet_begin();
 	if((flags & PRIM_FLAG_TEXTURED) && (flags & PRIM_FLAG_DECAL)) {
@@ -665,6 +704,14 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 			}
 			case DL_CMD_SPRITE: {
 				handle_sprite(cmd);
+				break;
+			}
+			case DL_CMD_TEXTURE_GEN_ON: {
+				texture_gen_enabled = true;
+				break;
+			}
+			case DL_CMD_TEXTURE_GEN_OFF: {
+				texture_gen_enabled = false;
 				break;
 			}
 			default: {

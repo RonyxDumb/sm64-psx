@@ -123,6 +123,8 @@ enum {
 	DL_CMD_SET_BACKGROUND,
 	DL_CMD_SET_ORTHO,
 	DL_CMD_SPRITE,
+	DL_CMD_TEXTURE_GEN_ON,
+	DL_CMD_TEXTURE_GEN_OFF,
 	// the commands below are less common and are split off so that the loop can fit in icache
 	_DL_CMD_ENUM_FIRST_EXTRA,
 	DL_CMD_MTX_MUL = _DL_CMD_ENUM_FIRST_EXTRA,
@@ -156,6 +158,7 @@ void gfx_emit_light_ambient(u32 color);
 void gfx_emit_light_directional0(Light_t* light);
 void gfx_emit_light_directional1(Light_t* light);
 void gfx_emit_screen_quad(s16 x0, s16 y0, s16 x1, s16 y1);
+void gfx_emit_screen_quad_vflip(s16 x0, s16 y0, s16 x1, s16 y1);
 void gfx_emit_multiplier(u32 multiplier);
 void gfx_emit_mtx_set(ShortMatrix* mtx_ptr);
 void gfx_emit_mtx_mul(ShortMatrix* mtx_ptr);

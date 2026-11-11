@@ -280,10 +280,19 @@ static int max3(int x, int y, int z) {
 			}
 			case (u8) G_SETGEOMETRYMODE: {
 				geometry_mode |= cmd->words.w1;
+				/* Metal Mario shares material state between separate geo display
+				 * lists. Preserve texture generation as a runtime state change,
+				 * not just a compile-time flag on the first list. */
+				if(cmd->words.w1 & G_TEXTURE_GEN) {
+					*(out++) = DL_PACK_OP(DL_CMD_TEXTURE_GEN_ON);
+				}
 				break;
 			}
 			case (u8) G_CLEARGEOMETRYMODE: {
 				geometry_mode &= ~cmd->words.w1;
+				if(cmd->words.w1 & G_TEXTURE_GEN) {
+					*(out++) = DL_PACK_OP(DL_CMD_TEXTURE_GEN_OFF);
+				}
 				break;
 			}
 			case (u8) G_SETOTHERMODE_L: {

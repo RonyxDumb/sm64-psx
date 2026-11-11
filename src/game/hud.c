@@ -116,9 +116,9 @@ void render_power_meter_health_segment(s16 numHealthWedges) {
 void render_dl_power_meter(s16 numHealthWedges) {
     gfx_emit_env_color_alpha_full(0xFFFFFF);
     gfx_emit_tex(segmented_to_virtual(texture_power_meter_left_side));
-    gfx_emit_screen_quad(sPowerMeterHUD.x, YRES - sPowerMeterHUD.y - 32, sPowerMeterHUD.x + 32, YRES - sPowerMeterHUD.y + 32);
+    gfx_emit_screen_quad_vflip(sPowerMeterHUD.x, YRES - sPowerMeterHUD.y - 32, sPowerMeterHUD.x + 32, YRES - sPowerMeterHUD.y + 32);
     gfx_emit_tex(segmented_to_virtual(texture_power_meter_right_side));
-    gfx_emit_screen_quad(sPowerMeterHUD.x + 32, YRES - sPowerMeterHUD.y - 32, sPowerMeterHUD.x + 64, YRES - sPowerMeterHUD.y + 32);
+    gfx_emit_screen_quad_vflip(sPowerMeterHUD.x + 32, YRES - sPowerMeterHUD.y - 32, sPowerMeterHUD.x + 64, YRES - sPowerMeterHUD.y + 32);
     if(numHealthWedges != 0) {
         render_power_meter_health_segment(numHealthWedges);
     }
