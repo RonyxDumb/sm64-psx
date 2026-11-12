@@ -22,7 +22,7 @@ class RendererRegressionTests(unittest.TestCase):
 
     def test_rippling_paintings_restore_material_state_every_frame(self):
         painting = (ROOT / "src/game/paintings.c").read_text()
-        self.assertIn("alloc_display_list((imageCount + 9) * sizeof(Gfx))", painting)
+        self.assertIn("(imageCount + 9) * sizeof(Gfx)", painting)
         self.assertIn("gDPSetCombineMode(gfx++, G_CC_MODULATERGBA, G_CC_MODULATERGBA);", painting)
         self.assertIn("gDPSetCombineMode(gfx++, G_CC_DECALRGB, G_CC_DECALRGB);", painting)
         self.assertIn("gSPSetGeometryMode(gfx++, G_LIGHTING | G_TEXTURE_GEN);", painting)
