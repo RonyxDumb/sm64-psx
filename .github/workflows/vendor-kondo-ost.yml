@@ -1,0 +1,58 @@
+name: Import the bundled PS1 soundtrack
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/vendor-kondo-ost.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.repository == 'RonyxDumb/sm64-psx'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Retrieve the Church of Kondo remasters
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+          python3 tools/import_kondo_soundtrack.py
+
+      - name: Encode and verify all 38 XA tracks
+        run: |
+          set -euo pipefail
+          docker build --tag sm64-psx-ost .
+          docker run --rm --user "$(id -u):$(id -g)" \
+            --volume "$GITHUB_WORKSPACE:/project" --workdir /project sm64-psx-ost sh -ec '
+              chmod +x tools/build/*
+              make VERSION=us NOEXTRACT=1 COLOR=0 build/us_psx/bgm/pack.xa
+            '
+          python3 tools/validate_xa_psx.py build/us_psx/bgm/pack.xa build/us_psx/bgm/info.dat
+          mkdir -p sound/bgm
+          for track in $(seq 0 37); do
+            install -m 644 "build/us_psx/bgm/$track.track.xa" "sound/bgm/$track.xa"
+          done
+
+      - name: Publish the XA tracks on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git add -- sound/bgm/*.xa
+          test "$(git diff --cached --name-only | wc -l)" -eq 38
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m "Include Church of Kondo's 38 PS1 XA tracks"
+          gh auth setup-git --hostname github.com
+          git -c http.version=HTTP/1.1 push origin HEAD:refs/heads/main
