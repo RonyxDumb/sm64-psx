@@ -11,6 +11,26 @@ from psx_static_mesh import Triangle, Vertex, compile_mesh, emit_list, read_comb
 
 
 class RendererRegressionTests(unittest.TestCase):
+    def test_completed_ps1_framebuffer_is_presented(self):
+        source = (ROOT / "src/port/psx/gfx_framebuffers_psx.c").read_text()
+        self.assertIn("selected_fb ^= 1;", source)
+        self.assertIn("gp1_fbOffset(selected_fb ? 0 : XRES, 0)", source)
+        self.assertNotIn("gp1_fbOffset(selected_fb? XRES: 0, 0)", source)
+
+    def test_door_root_motion_survives_packed_animation_conversion(self):
+        converter = (ROOT / "tools/mario_anims_converter.py").read_text()
+        renderer = (ROOT / "src/game/rendering_graph_node.c").read_text()
+        memory = (ROOT / "src/game/memory.c").read_text()
+        mario = (ROOT / "src/game/mario.c").read_text()
+        interaction = (ROOT / "src/game/interaction.c").read_text()
+        for identifier in ("anim_5F", "anim_60", "anim_61", "anim_9C", "anim_9D"):
+            self.assertIn(identifier, converter)
+        self.assertIn("has_xzpos = True\n        has_ypos = True", converter)
+        self.assertIn("is_anim_root_motion_preserved", renderer)
+        self.assertIn("sample_mario_root_translation", mario)
+        self.assertIn("mario_anim_data_bytes = segment_size - just_table_size", memory)
+        self.assertIn("q32_find_wall_collision(&newMarioXq, &newMarioYq, &newMarioZq, q(60), q(50))", interaction)
+
     def test_us_dialog_font_is_sideways_and_runtime_rotates_it(self):
         assets = json.loads((ROOT / "assets.json").read_text())
         glyph = assets["textures/segment2/font_graphics.05900.ia4.png"]

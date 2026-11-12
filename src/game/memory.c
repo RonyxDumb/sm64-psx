@@ -485,29 +485,38 @@ static void receive(uint8_t* buf, uint32_t start, uint32_t len) {
 #define VRAM_Y 0
 #define VRAM_WIDTH 384
 #define VRAM_ROW_BYTES (VRAM_WIDTH * 2)
-#define VRAM_HEIGHT ((ANIM_MAIN_DATA_SIZE + VRAM_ROW_BYTES - 1) / VRAM_ROW_BYTES)
-STATIC_ASSERT(VRAM_HEIGHT < 256, "mario animations won't fit in the designated vram area");
+#define VRAM_CAPACITY_BYTES (VRAM_ROW_BYTES * 256)
+static u32 mario_anim_data_bytes;
 
-u32 setup_mario_anims(struct DmaHandlerList *list, void *segment_start, UNUSED void *segment_end, void *buffer) {
-	void* seg_buf = main_pool_alloc((ANIM_SEGMENT_SIZE + SECTOR_SIZE - 1) / SECTOR_SIZE * SECTOR_SIZE, MEMORY_POOL_LEFT);
-	dma_read(seg_buf, segment_start, segment_start + ANIM_SEGMENT_SIZE);
+u32 setup_mario_anims(struct DmaHandlerList *list, void *segment_start, void *segment_end, void *buffer) {
+	/* Packed animation data size is build-dependent: do not truncate new
+	 * root-motion tracks by reading the previous hard-coded ROM size. */
+	u32 segment_size = (u8*) segment_end - (u8*) segment_start;
+	u32 read_size = (segment_size + SECTOR_SIZE - 1) / SECTOR_SIZE * SECTOR_SIZE;
+	void* seg_buf = main_pool_alloc(read_size, MEMORY_POOL_LEFT);
+	assert(seg_buf);
+	dma_read(seg_buf, segment_start, segment_end);
 	u32 just_table_size = ((struct DmaTable*) seg_buf)->count * sizeof(struct OffsetSizePair) + sizeof(struct DmaTable);
+	assert(just_table_size <= segment_size);
+	mario_anim_data_bytes = segment_size - just_table_size;
+	assert(mario_anim_data_bytes <= VRAM_CAPACITY_BYTES);
+	u32 rows = (mario_anim_data_bytes + VRAM_ROW_BYTES - 1) / VRAM_ROW_BYTES;
 
-	sendVRAMData(seg_buf + just_table_size, VRAM_X, VRAM_Y, VRAM_WIDTH, VRAM_HEIGHT);
+	sendVRAMData((u8*) seg_buf + just_table_size, VRAM_X, VRAM_Y, VRAM_WIDTH, rows);
 	waitForDMADone();
 
 	seg_buf = main_pool_realloc(seg_buf, just_table_size);
 	list->dmaTable = (struct DmaTable*) seg_buf;
 	list->currentAddr = NULL;
 	list->bufTarget = buffer;
-	return ANIM_MAIN_DATA_SIZE;
+	return mario_anim_data_bytes;
 }
 
 static void receive(uint8_t* buf, uint32_t start, uint32_t len) {
 	// Animation tracks are stored in contiguous VRAM rows. Read complete
 	// rows in one GPU transfer rather than stalling once per row. Keep edge
 	// rows in a staging buffer to avoid copying past the requested size.
-	assert(start <= ANIM_MAIN_DATA_SIZE && len <= ANIM_MAIN_DATA_SIZE - start);
+	assert(start <= mario_anim_data_bytes && len <= mario_anim_data_bytes - start);
 	if(len == 0) return;
 
 	u32 y = VRAM_Y + start / VRAM_ROW_BYTES;

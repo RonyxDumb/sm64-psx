@@ -21,6 +21,11 @@ ANIM_FLAG_HOR_TRANS = (1 << 3)
 ANIM_FLAG_VERT_TRANS = (1 << 4)
 ANIM_FLAG_NO_TRANS = (1 << 6)
 ANIM_FLAG_COMPRESSED = (1 << 7)
+ANIM_FLAG_PSX_ROOT_MOTION = (1 << 8)
+# These cutscenes move Mario in world space using their root X/Z tracks.
+# Without them the packed PS1 animations shift attribute indices and the
+# character walks the wrong way while interacting with doors.
+PRESERVE_ROOT_MOTION = {"anim_5F", "anim_60", "anim_61", "anim_9C", "anim_9D"}
 
 flags_mapping = {}
 values_to_indices_name_mapping = {}
@@ -33,6 +38,8 @@ def parse_struct(filename, lines, lineindex, name):
     v1 = int(lines[lineindex + 0].rstrip(","), 0)
     if compress:
         v1 |= ANIM_FLAG_COMPRESSED
+        if name in PRESERVE_ROOT_MOTION:
+            v1 |= ANIM_FLAG_PSX_ROOT_MOTION
     v2 = int(lines[lineindex + 1].rstrip(","), 0)
     v3 = int(lines[lineindex + 2].rstrip(","), 0)
     v4 = int(lines[lineindex + 3].rstrip(","), 0)
@@ -125,6 +132,11 @@ def compress_pair(values_name: str, indices_name: str, flags: int):
         has_xzpos = False
         has_ypos = False
     else:
+        has_xzpos = True
+        has_ypos = True
+    # Keep the 3 root channels even when only Y is rendered. The other
+    # channels are consumed by update_mario_pos_for_anim() in world space.
+    if flags & ANIM_FLAG_PSX_ROOT_MOTION:
         has_xzpos = True
         has_ypos = True
     new_values = []

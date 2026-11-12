@@ -166,7 +166,9 @@ struct VblankHandler
 #define ANIM_FLAG_VERT_TRANS (1 << 4) // 0x10
 #define ANIM_FLAG_5          (1 << 5) // 0x20
 #define ANIM_FLAG_6          (1 << 6) // 0x40
-#define ANIM_FLAG_7          (1 << 7) // 0x80
+#define ANIM_FLAG_7          (1 << 7)
+/* PS1 packed animations that retain all 3 root-motion translation tracks. */
+#define ANIM_FLAG_PSX_ROOT_MOTION (1 << 8) // 0x80
 
 struct Animation {
     /*0x00*/ s16 flags;

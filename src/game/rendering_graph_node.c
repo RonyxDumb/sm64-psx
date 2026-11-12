@@ -213,6 +213,7 @@ q32 gCurAnimTranslationMultiplierq;
 u16* gCurrAnimAttribute;
 const s16* gCurAnimData;
 static bool is_anim_compressed = false;
+static bool is_anim_root_motion_preserved = false;
 
 static void geo_set_animation_globals(struct AnimInfo* node, s32 hasAnimation) {
 	struct Animation* anim = node->curAnim;
@@ -230,6 +231,7 @@ static void geo_set_animation_globals(struct AnimInfo* node, s32 hasAnimation) {
 		gCurAnimType = ANIM_TYPE_TRANSLATION;
 	}
 	is_anim_compressed = (anim->flags & ANIM_FLAG_7) != 0;
+	is_anim_root_motion_preserved = (anim->flags & ANIM_FLAG_PSX_ROOT_MOTION) != 0;
 
 	gCurrAnimFrame = node->animFrame;
 	gCurAnimEnabled = !(anim->flags & ANIM_FLAG_5);
@@ -488,7 +490,9 @@ static void geo_process_animated_part(struct GraphNodeAnimatedPart* node) {
 						assert(value > -2147400);
 					}
 					translation[i] += value * gCurAnimTranslationMultiplierq / ONE;
-				} else if(!is_anim_compressed) {
+				} else if(!is_anim_compressed || is_anim_root_motion_preserved) {
+					/* Root X/Z are applied in world space by Mario, not on the
+					 * rendered skeleton. Still consume their packed index pairs. */
 					gCurrAnimAttribute += 2;
 				}
 			}
