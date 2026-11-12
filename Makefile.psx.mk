@@ -30,6 +30,12 @@ include Makefile.split.mk
 
 # Source code files
 LEVEL_C_FILES        := $(foreach dir,$(LEVEL_DIRS),levels/$(dir)leveldata.c levels/$(dir)geo.c levels/$(dir)script.c)
+EXT_SOURCE_C_FILES   := $(LEVEL_C_FILES) $(SEGMENTS:%=bin/%.c) $(ACTOR_GROUPS:%=actors/%.c) $(ACTOR_GROUPS:%=actors/%_geo.c)
+EXT_GENERATED_C_FILES := assets/mario_anim_data.c assets/demo_data.c
+EXT_C_OBJECTS        := $(addprefix $(BUILD_DIR)/,$(EXT_SOURCE_C_FILES:.c=.o2) $(EXT_GENERATED_C_FILES:.c=.o2))
+LEVEL_SCRIPTGEO_ELFS := $(LEVEL_SCRIPTGEO_FILES:%=$(BUILD_DIR)/levels/%.elf)
+ACTOR_GEO_ELFS       := $(GROUP_SEG_FILES:%.elf=%_geo.elf)
+EXTRA_ASSET_ELFS     := $(EXT_GENERATED_C_FILES:%.c=$(BUILD_DIR)/%.elf)
 C_FILES              := $(foreach dir,$(SRC_DIRS),$(wildcard $(dir)/*.c))
 LIBC_C_FILES         := $(foreach dir,$(LIBC_SRC_DIRS),$(wildcard $(dir)/*.c))
 LIBC_S_FILES         := $(foreach dir,$(LIBC_SRC_DIRS),$(wildcard $(dir)/*.s))
@@ -396,21 +402,21 @@ $(BUILD_DIR)/sfx_defs.generated.c $(SFX_DATA_BIN) &: sound/sequences/00_sound_pl
 #==============================================================================#
 
 # Link segment file to resolve external labels
-$(BUILD_DIR)/%.elf: $(BUILD_DIR)/%.o2
+$(BIN_SEG_FILES) $(GROUP_SEG_FILES) $(EXTRA_ASSET_ELFS): $(BUILD_DIR)/%.elf: $(BUILD_DIR)/%.o2
 >	$(call print,Linking asset ELF file (at $(SEGMENT_ADDRESS)):,$<,$@)
 >	$(V)$(EXT_LD) $(EXT_CFLAGS) -e 0 -Wl,-Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Wl,-Text_files_elf.ld -Wl,--unresolved-symbols=ignore-all -Wl,-Map -Wl,$@.map -o $@.tmp $<
 >	$(V)$(OBJCOPY) -j .data $@.tmp
 >	$(V)mv $@.tmp $@
 # Override for leveldata.elf, which otherwise matches the above pattern
 .SECONDEXPANSION:
-$(BUILD_DIR)/levels/%/leveldata.elf: $(BUILD_DIR)/levels/%/leveldata.o2 $(BUILD_DIR)/bin/$$(TEXTURE_BIN).elf
+$(LEVEL_SEG_FILES): $(BUILD_DIR)/levels/%/leveldata.elf: $(BUILD_DIR)/levels/%/leveldata.o2 $(BUILD_DIR)/bin/$$(TEXTURE_BIN).elf
 >	$(call print,Linking leveldata ELF file (at $(SEGMENT_ADDRESS)):,$<,$@)
 >	$(V)$(EXT_LD) $(EXT_CFLAGS) -e 0 -Wl,-Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Wl,-Text_files_elf.ld -Wl,--unresolved-symbols=ignore-all -Wl,-Map -Wl,$@.map -Wl,--just-symbols=$(BUILD_DIR)/bin/$(TEXTURE_BIN).elf -o $@.tmp $<
 >	$(V)$(OBJCOPY) -j .data $@.tmp
 >	$(V)mv $@.tmp $@
 
 .SECONDEXPANSION:
-$(BUILD_DIR)/levels/%/scriptgeo.elf: $(BUILD_DIR)/levels/%/script.o2 $(BUILD_DIR)/levels/%/geo.o2 $(BUILD_DIR)/levels/%/leveldata.elf $(GROUP_SEG_FILES) $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt
+$(filter-out $(BUILD_DIR)/levels/intro/scriptgeo.elf $(BUILD_DIR)/levels/menu/scriptgeo.elf,$(LEVEL_SCRIPTGEO_ELFS)): $(BUILD_DIR)/levels/%/scriptgeo.elf: $(BUILD_DIR)/levels/%/script.o2 $(BUILD_DIR)/levels/%/geo.o2 $(BUILD_DIR)/levels/%/leveldata.elf $(GROUP_SEG_FILES) $(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt
 >	$(call print,Linking level script & geo ELF file (at $(SEGMENT_ADDRESS)):,$<,$@)
 >	$(V)$(EXT_LD) $(EXT_CFLAGS) -e 0 -Wl,-Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Wl,-Text_files_elf.ld -Wl,--unresolved-symbols=ignore-all -Wl,-Map -Wl,$@.map $(GROUP_SEG_FILES:%=-Wl,--just-symbols=%) -Wl,--just-symbols=$(@:scriptgeo.elf=leveldata.elf) @$(BUILD_DIR)/ext_files_defsym_noscriptgeo.txt -o $@.tmp $< $(<:script.o2=geo.o2)
 >	$(V)$(OBJCOPY) -j .data $@.tmp
@@ -431,7 +437,7 @@ $(BUILD_DIR)/levels/menu/scriptgeo.elf: $(BUILD_DIR)/levels/menu/script.o2 $(BUI
 >	$(V)mv $@.tmp $@
 
 .SECONDEXPANSION:
-$(BUILD_DIR)/actors/%_geo.elf: $(BUILD_DIR)/actors/%_geo.o2 $(BUILD_DIR)/actors/%.elf
+$(ACTOR_GEO_ELFS): $(BUILD_DIR)/actors/%_geo.elf: $(BUILD_DIR)/actors/%_geo.o2 $(BUILD_DIR)/actors/%.elf
 >	$(call print,Linking actor geo ELF file (at $(SEGMENT_ADDRESS)):,$<,$@)
 >	$(V)$(EXT_LD) $(EXT_CFLAGS) -e 0 -Wl,-Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Wl,-Text_files_elf.ld -Wl,-Map -Wl,$@.map -Wl,--just-symbols=$(filter-out $<,$^) -o $@.tmp $<
 >	$(V)$(OBJCOPY) -j .data $@.tmp
@@ -468,13 +474,13 @@ $(BUILD_DIR)/levels/%/leveldata.level.txt: $(BUILD_DIR)/levels/%/leveldata.elf
 #	$(NM) -SUP $(MIO0_FILES:.mio0=.mio0.o) $(LEVEL_O_FILES) > $@.tmp
 COMMA = ,
 DEFSYM_PREFIX := -Wl,
-$(BUILD_DIR)/%.section.txt: $(BUILD_DIR)/%.elf
+$(ACTOR_GEO_ELFS:%.elf=%.section.txt) $(BUILD_DIR)/assets/demo_data.section.txt: $(BUILD_DIR)/%.section.txt: $(BUILD_DIR)/%.elf
 >	$(V)readelf -S $^ | sed -Enz "s?.*\\.data\\s+PROGBITS\\s+[0-9A-Za-z]+\\s+([0-9A-Za-z]+)\\s+([0-9A-Za-z]+).*?$^:\1:\2!_$(basename $(notdir $^))SegmentRomStart:_$(basename $(notdir $^))SegmentRomEnd ?p" > $@
-$(BUILD_DIR)/%.mio0section.txt: $(BUILD_DIR)/%.elf
+$(BIN_SEG_FILES:%.elf=%.mio0section.txt) $(GROUP_SEG_FILES:%.elf=%.mio0section.txt): $(BUILD_DIR)/%.mio0section.txt: $(BUILD_DIR)/%.elf
 >	$(V)readelf -S $^ | sed -Enz "s?.*\\.data\\s+PROGBITS\\s+[0-9A-Za-z]+\\s+([0-9A-Za-z]+)\\s+([0-9A-Za-z]+).*?$^:\1:\2!_$(basename $(notdir $^))_mio0SegmentRomStart:_$(basename $(notdir $^))_mio0SegmentRomEnd ?p" > $@
-$(BUILD_DIR)/%.leveldatasection.txt: $(BUILD_DIR)/%/leveldata.elf
+$(LEVEL_SEG_FILES:%/leveldata.elf=%.leveldatasection.txt): $(BUILD_DIR)/%.leveldatasection.txt: $(BUILD_DIR)/%/leveldata.elf
 >	$(V)readelf -S $^ | sed -Enz "s?.*\\.data\\s+PROGBITS\\s+[0-9A-Za-z]+\\s+([0-9A-Za-z]+)\\s+([0-9A-Za-z]+).*?$^:\1:\2!_$(basename $(basename $(notdir $@)))_segment_7SegmentRomStart:_$(basename $(basename $(notdir $@)))_segment_7SegmentRomEnd ?p" > $@
-$(BUILD_DIR)/%.levelscriptgeosection.txt: $(BUILD_DIR)/%/scriptgeo.elf
+$(LEVEL_SCRIPTGEO_ELFS:%/scriptgeo.elf=%.levelscriptgeosection.txt): $(BUILD_DIR)/%.levelscriptgeosection.txt: $(BUILD_DIR)/%/scriptgeo.elf
 >	$(V)readelf -S $^ | sed -Enz "s?.*\\.data\\s+PROGBITS\\s+[0-9A-Za-z]+\\s+([0-9A-Za-z]+)\\s+([0-9A-Za-z]+).*?$^:\1:\2!_$(basename $(basename $(notdir $@)))SegmentRomStart:_$(basename $(basename $(notdir $@)))SegmentRomEnd ?p" > $@
 $(BUILD_DIR)/ext_files_sections_noscriptgeo.txt: $(BIN_SEG_FILES:%.elf=%.mio0section.txt) $(GROUP_SEG_FILES:%.elf=%.mio0section.txt) $(GROUP_SEG_FILES:%.elf=%_geo.section.txt) $(LEVEL_SEG_FILES:%/leveldata.elf=%.leveldatasection.txt)
 >	@cat $^ > $@
@@ -560,12 +566,12 @@ $(NATIVE_AREA_C_FILES): $(BUILD_DIR)/%.processed.c: %.c $(TOOLS_DIR)/psx_static_
 >	$(V)mkdir -p $(dir $@)
 >	$(V)$(PYTHON) $(TOOLS_DIR)/psx_static_mesh.py --build-dir $(BUILD_DIR) --catalog $(MESH_TEXTURE_CATALOG) $< $@
 
-$(BUILD_DIR)/%.processed.c: %.c $(CONV_MODEL_C_FILES) $(TOOLS_DIR)/preprocess_graphics.py
+$(EXT_SOURCE_C_FILES:%.c=$(BUILD_DIR)/%.processed.c): $(BUILD_DIR)/%.processed.c: %.c $(CONV_MODEL_C_FILES) $(TOOLS_DIR)/preprocess_graphics.py
 >	$(call print,Preprocessing graphics:,$<,$@)
 >	$(V)mkdir -p $(dir $@)
 >	$(V)$(PYTHON) $(TOOLS_DIR)/preprocess_graphics.py $< $@ $(C_DEFINES)
 
-$(BUILD_DIR)/%.processed.c: $(BUILD_DIR)/%.c $(CONV_MODEL_C_FILES) $(TOOLS_DIR)/preprocess_graphics.py
+$(EXT_GENERATED_C_FILES:%.c=$(BUILD_DIR)/%.processed.c): $(BUILD_DIR)/%.processed.c: $(BUILD_DIR)/%.c $(TOOLS_DIR)/preprocess_graphics.py
 >	$(call print,Preprocessing graphics:,$<,$@)
 >	$(V)mkdir -p $(dir $@)
 >	$(V)$(PYTHON) $(TOOLS_DIR)/preprocess_graphics.py $< $@ $(C_DEFINES)
@@ -619,7 +625,7 @@ $(BUILD_DIR)/%.o: %.cpp $(CFLAGS_FILE) $(BUILD_DIR)/ext_files.dat
 $(BUILD_DIR)/%.o: %.c $(CFLAGS_FILE) $(BUILD_DIR)/ext_files.dat
 >	$(call print,Compiling:,$<,$@)
 >	$(V)$(CC) -c $(CFLAGS) -iquote $(dir $@) -MMD -MP -MT $@ -MF $(BUILD_DIR)/$*.d -o $@ $<
-$(BUILD_DIR)/%.o2: $(BUILD_DIR)/%.processed.c $(TOOLS_DIR)/preprocess_graphics.py $(BUILD_DIR)/tex_pack $(CAKE_INC_C) $(CFLAGS_FILE)
+$(EXT_C_OBJECTS): $(BUILD_DIR)/%.o2: $(BUILD_DIR)/%.processed.c $(TOOLS_DIR)/preprocess_graphics.py $(BUILD_DIR)/tex_pack $(CAKE_INC_C) $(CFLAGS_FILE)
 >	$(call print,Compiling:,$<,$@)
 >	$(V)$(CC) -c $(EXT_CFLAGS) -iquote $(dir $*) -MMD -MP -MT $@ -MF $(BUILD_DIR)/$*.d -o $@ $<
 $(BUILD_DIR)/%.o: $(BUILD_DIR)/%.c $(CFLAGS_FILE)

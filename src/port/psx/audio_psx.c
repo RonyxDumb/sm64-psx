@@ -916,6 +916,7 @@ static void sfx_backend_tick(void) {
 
 bool cd_playing_audio = false;
 #if !defined(SERIAL) && !defined(BENCH)
+MinSecFrame cd_audio_start_msf;
 static u8 cur_song_idx;
 #endif
 
@@ -930,9 +931,10 @@ void play_music(UNUSED u8 player, UNUSED u16 seqArgs, UNUSED u16 fadeTimer) {
 			}
 		} else {
 			cur_song_idx = track - 2;
+			cd_audio_start_msf = bgm_info[cur_song_idx].start_msf;
 			psx_cd_run_cmd(CDROM_SETMODE, (const u8[]) {MODE_XA_ADPCM | MODE_XA_SECTOR_FILTER | MODE_2X_SPEED}, 1, NULL, 0);
 			psx_cd_run_cmd(CDROM_SETFILTER, (const u8[]) {cur_song_idx, 0}, 2, NULL, 0);
-			psx_cd_run_cmd(CDROM_SETLOC, (u8*) bgm_info[cur_song_idx].start_msf.bytes, 3, NULL, 0);
+			psx_cd_run_cmd(CDROM_SETLOC, cd_audio_start_msf.bytes, 3, NULL, 0);
 			psx_cd_run_cmd(CDROM_READS, NULL, 0, NULL, 0);
 			cd_playing_audio = true;
 		}
@@ -945,13 +947,14 @@ void audio_backend_tick() {
 #if !defined(SERIAL) && !defined(BENCH)
 	if(cd_playing_audio) {
 		MinSecFrame playing_msf;
-		do {
-			psx_cd_run_cmd(CDROM_NOP, NULL, 0, NULL, 0);
-		} while(CDROM_RESULT & CDROM_STAT_SEEK);
-		psx_cd_run_cmd(CDROM_GETLOCL, NULL, 0, playing_msf.bytes, 3);
+		u8 stat;
+		psx_cd_run_cmd(CDROM_NOP, NULL, 0, &stat, 1);
+		if((stat & CDROM_STAT_SEEK) || !psx_cd_get_audio_position(&playing_msf)) {
+			return;
+		}
 		MinSecFrame song_end_msf = bgm_info[cur_song_idx].end_msf;
 		if(((u32) playing_msf.min << 16 | (u32) playing_msf.sec << 8 | playing_msf.frame) > ((u32) song_end_msf.min << 16 | (u32) song_end_msf.sec << 8 | song_end_msf.frame)) {
-			psx_cd_run_cmd(CDROM_SETLOC, (u8*) bgm_info[cur_song_idx].start_msf.bytes, 3, NULL, 0);
+			psx_cd_run_cmd(CDROM_SETLOC, cd_audio_start_msf.bytes, 3, NULL, 0);
 			psx_cd_run_cmd(CDROM_READS, NULL, 0, NULL, 0);
 		}
 	}

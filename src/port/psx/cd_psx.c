@@ -19,7 +19,7 @@ static u32 dat_lba;
 #define SECTOR_SIZE 2048
 extern u32 gGlobalTimer;
 
-void psx_cd_await_interrupt(u8 expected, u8* result, int result_size) {
+static bool wait_for_cd_interrupt(u8 expected, u8* result, int result_size) {
 	CDROM_ADDRESS = 1; // interrupt flags are only accessible at index 1
 	while(true) {
 		asm volatile inline("");
@@ -27,7 +27,12 @@ void psx_cd_await_interrupt(u8 expected, u8* result, int result_size) {
 		if(got) { // supposedly the read is a bit unstable, so read twice just in case
 			got = CDROM_HINTSTS & 7;
 
-			// acknowledge whichever interrupts we get, but only stop on the expected one
+			// INT5 is the final response when the drive rejects a command.
+			if(got == IRQ_ERROR) {
+				CDROM_HCLRCTL = 7;
+				return false;
+			}
+
 			if(got == expected) {
 				for(int i = 0; i < result_size; i++) {
 					result[i] = CDROM_RESULT;
@@ -43,16 +48,20 @@ void psx_cd_await_interrupt(u8 expected, u8* result, int result_size) {
 				}
 
 				CDROM_HCLRCTL = 7; // acknowledge the interrupt
-				return;
+				return true;
 			} else {
-				//assert(got != 5);
 				CDROM_HCLRCTL = 7; // acknowledge the interrupt
 			}
 		}
 	}
 }
 
-void psx_cd_run_cmd(u8 cmd, const u8* args, int arg_count, u8* result, int result_size) {
+void psx_cd_await_interrupt(u8 expected, u8* result, int result_size) {
+	assertmf(wait_for_cd_interrupt(expected, result, result_size),
+		"CD read failed", "CD-ROM error waiting for INT%u\n", expected);
+}
+
+static bool try_cd_command(u8 cmd, const u8* args, int arg_count, u8* result, int result_size) {
 	while(CDROM_HSTS & CDROM_HSTS_BUSYSTS) {
 		asm volatile inline("");
 	}
@@ -70,7 +79,16 @@ void psx_cd_run_cmd(u8 cmd, const u8* args, int arg_count, u8* result, int resul
 		CDROM_PARAMETER = args[i];
 	}
 	CDROM_COMMAND = cmd;
-	psx_cd_await_interrupt(3, result, result_size);
+	return wait_for_cd_interrupt(IRQ_CMD_ACKNOWLEDGE, result, result_size);
+}
+
+void psx_cd_run_cmd(u8 cmd, const u8* args, int arg_count, u8* result, int result_size) {
+	assertmf(try_cd_command(cmd, args, arg_count, result, result_size),
+		"CD command failed", "CD-ROM command %02x failed\n", cmd);
+}
+
+bool psx_cd_get_audio_position(MinSecFrame* position) {
+	return try_cd_command(CDROM_GETLOCL, NULL, 0, position->bytes, 3);
 }
 
 MinSecFrame lba_to_msf(u32 lba) {
@@ -83,13 +101,13 @@ MinSecFrame lba_to_msf(u32 lba) {
 }
 
 void psx_cd_do_read(u8* buf, u32 logical_block, u32 sector_count, u8* excess_buf) {
-	MinSecFrame bak_msf;
+	MinSecFrame bak_msf = cd_audio_start_msf;
 	if(cd_playing_audio) {
 		u8 stat;
-		do {
-			psx_cd_run_cmd(CDROM_GETPARAM, NULL, 0, &stat, 1);
-		} while(stat & CDROM_STAT_SEEK);
-		psx_cd_run_cmd(CDROM_GETLOCL, NULL, 0, bak_msf.bytes, 3);
+		psx_cd_run_cmd(CDROM_GETPARAM, NULL, 0, &stat, 1);
+		if(!(stat & CDROM_STAT_SEEK)) {
+			psx_cd_get_audio_position(&bak_msf);
+		}
 	}
 
 	psx_cd_run_cmd(CDROM_SETMODE, (const u8[]) {MODE_2X_SPEED}, 1, NULL, 0);

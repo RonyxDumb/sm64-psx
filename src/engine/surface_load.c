@@ -36,16 +36,10 @@ u8 unused8038EEA8[0x30];
  * Allocate the part of the surface node pool to contain a surface node.
  */
 static struct SurfaceNode *alloc_surface_node(void) {
-    struct SurfaceNode *node = &sSurfaceNodePool[gSurfaceNodesAllocated];
-    gSurfaceNodesAllocated++;
-
-    node->next = NULL;
-
-    //! A bounds check! If there's more surface nodes than 7000 allowed,
-    //  we, um...
-    // Perhaps originally just debug feedback?
-    // replaced it with an assert
-    assertm(gSurfaceNodesAllocated < SURFACE_NODE_POOL_LEN, "surface node pool full");
+    assertmf(gSurfaceNodesAllocated < SURFACE_NODE_POOL_LEN, "collision node pool full",
+             "Collision node limit: %d\n", SURFACE_NODE_POOL_LEN);
+    struct SurfaceNode *node = &sSurfaceNodePool[gSurfaceNodesAllocated++];
+    surface_node_set_next(node, NULL);
 
     return node;
 }
@@ -55,14 +49,9 @@ static struct SurfaceNode *alloc_surface_node(void) {
  * initialize the surface.
  */
 static struct Surface *alloc_surface(void) {
-    struct Surface *surface = &sSurfacePool[gSurfacesAllocated];
-    gSurfacesAllocated++;
-
-    //! A bounds check! If there's more surfaces than the 2300 allowed,
-    //  we, um...
-    // Perhaps originally just debug feedback?
-    // replaced with an assert
-    assertm(gSurfacesAllocated < SURFACE_POOL_LEN, "surface pool full");
+    assertmf(gSurfacesAllocated < SURFACE_POOL_LEN, "collision surface pool full",
+             "Collision surface limit: %d\n", SURFACE_POOL_LEN);
+    struct Surface *surface = &sSurfacePool[gSurfacesAllocated++];
 
     surface->type = 0;
     surface->force = 0;
@@ -80,9 +69,9 @@ static void clear_spatial_partition(SpatialPartitionCell *cells) {
     register s32 i = NUM_CELLS * NUM_CELLS;
 
     while (i--) {
-        (*cells)[SPATIAL_PARTITION_FLOORS].next = NULL;
-        (*cells)[SPATIAL_PARTITION_CEILS].next = NULL;
-        (*cells)[SPATIAL_PARTITION_WALLS].next = NULL;
+        surface_node_set_next(&(*cells)[SPATIAL_PARTITION_FLOORS], NULL);
+        surface_node_set_next(&(*cells)[SPATIAL_PARTITION_CEILS], NULL);
+        surface_node_set_next(&(*cells)[SPATIAL_PARTITION_WALLS], NULL);
 
         cells++;
     }
@@ -133,7 +122,7 @@ static void add_surface_to_cell(s16 dynamic, s16 cellX, s16 cellZ, struct Surfac
     //  upperY would be a better sort method.
     surfacePriority = surface->vertex1[1] * sortDir;
 
-    newNode->surface = surface;
+    surface_node_set_surface(newNode, surface);
 
     if (dynamic) {
         list = &gDynamicSurfacePartition[cellZ][cellX][listIndex];
@@ -142,18 +131,20 @@ static void add_surface_to_cell(s16 dynamic, s16 cellX, s16 cellZ, struct Surfac
     }
 
     // Loop until we find the appropriate place for the surface in the list.
-    while (list->next != NULL) {
-        priority = list->next->surface->vertex1[1] * sortDir;
+    struct SurfaceNode *next = surface_node_next(list);
+    while (next != NULL) {
+        priority = surface_node_surface(next)->vertex1[1] * sortDir;
 
         if (surfacePriority > priority) {
             break;
         }
 
-        list = list->next;
+        list = next;
+        next = surface_node_next(list);
     }
 
-    newNode->next = list->next;
-    list->next = newNode;
+    surface_node_set_next(newNode, next);
+    surface_node_set_next(list, newNode);
 }
 
 /**

@@ -104,6 +104,7 @@ static int max3(int x, int y, int z) {
 
 // returns true if the compiled display list is not empty
 [[gnu::flatten]] bool gfx_compile_rsp(Gfx* cmd, bool nested) {
+	if(!cmd) return false;
 	dl_t* stream = (dl_t*) cmd;
 	dl_t first = *stream;
 	u8 first_op = DL_UNPACK_OP(first);

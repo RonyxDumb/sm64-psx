@@ -17,6 +17,7 @@
 #include "paintings.h"
 #include "save_file.h"
 #include "segment2.h"
+#include <port/gfx/gfx.h>
 
 /**
  * @file paintings.c
@@ -688,6 +689,7 @@ void painting_generate_mesh(struct Painting *painting, s16 *mesh, s16 numTris) {
 
     gPaintingMesh = mem_pool_alloc(gEffectsMemoryPool, numTris * sizeof(struct PaintingMeshVertex));
     if (gPaintingMesh == NULL) {
+        return;
     }
     // accesses are off by 1 since the first entry is the number of vertices
     for (i = 0; i < numTris; i++) {
@@ -720,6 +722,7 @@ void painting_calculate_triangle_normals(s16 *mesh, s16 numVtx, s16 numTris) {
 
     gPaintingTriNorms = mem_pool_alloc(gEffectsMemoryPool, numTris * sizeof(Vec3f));
     if (gPaintingTriNorms == NULL) {
+        return;
     }
     for (i = 0; i < numTris; i++) {
         s16 tri = numVtx * 3 + i * 3 + 2; // Add 2 because of the 2 length entries preceding the list
@@ -849,6 +852,7 @@ Gfx *render_painting(u8 *img, s16 tWidth, s16 tHeight, s16 *textureMap, s16 mapV
     Gfx *gfx = dlist;
 
     if (verts == NULL || dlist == NULL) {
+        return NULL;
     }
 
     gLoadBlockTexture(gfx++, tWidth, tHeight, G_IM_FMT_RGBA, img);
@@ -896,9 +900,11 @@ Gfx *render_painting(u8 *img, s16 tWidth, s16 tHeight, s16 *textureMap, s16 mapV
     }
 
     // Draw the triangles individually
-    gSPVertex(gfx++, VIRTUAL_TO_PHYSICAL(verts + triGroups * 15), remGroupTris * 3, 0);
-    for (group = 0; group < remGroupTris; group++) {
-        gSP1Triangle(gfx++, group * 3, group * 3 + 1, group * 3 + 2, 0);
+    if (remGroupTris != 0) {
+        gSPVertex(gfx++, VIRTUAL_TO_PHYSICAL(verts + triGroups * 15), remGroupTris * 3, 0);
+        for (group = 0; group < remGroupTris; group++) {
+            gSP1Triangle(gfx++, group * 3, group * 3 + 1, group * 3 + 2, 0);
+        }
     }
 
     gSPEndDisplayList(gfx);
@@ -908,32 +914,30 @@ Gfx *render_painting(u8 *img, s16 tWidth, s16 tHeight, s16 *textureMap, s16 mapV
 /**
  * Orient the painting mesh for rendering.
  */
-Gfx *painting_model_view_transform([[gnu::unused]] struct Painting *painting) {
-	return nullptr;
-	// TODO
-    // f32 sizeRatio = painting->size / PAINTING_SIZE;
-    // Mtx *rotX = alloc_display_list(sizeof(Mtx));
-    // Mtx *rotY = alloc_display_list(sizeof(Mtx));
-    // Mtx *translate = alloc_display_list(sizeof(Mtx));
-    // Mtx *scale = alloc_display_list(sizeof(Mtx));
-    // Gfx *dlist = alloc_display_list(5 * sizeof(Gfx));
-    // Gfx *gfx = dlist;
+Gfx *painting_model_view_transform(struct Painting *painting) {
+    ShortMatrix *matrix = alloc_display_list(sizeof(*matrix));
+    dl_t *dlist = alloc_display_list(3 * sizeof(*dlist));
+    if (matrix == NULL || dlist == NULL) {
+        return NULL;
+    }
 
-    // if (rotX == NULL || rotY == NULL || translate == NULL || dlist == NULL) {
-    // }
+    const f32 unitsPerDegree = 65536.0f / 360.0f;
+    const s16 angles[3] = {
+        (s16) (s32) (painting->pitch * unitsPerDegree),
+        (s16) (s32) (painting->yaw * unitsPerDegree),
+        0,
+    };
+    const q32 size = (q32) (painting->size * (QONE / PAINTING_SIZE));
+    *matrix = mtx_rotation_xyz(angles);
+    mtx_scaleq(matrix, (const q32[3]) {size, size, size});
+    matrix->t[0] = (s32) painting->posX;
+    matrix->t[1] = (s32) painting->posY;
+    matrix->t[2] = (s32) painting->posZ;
 
-    // guTranslate(translate, painting->posX, painting->posY, painting->posZ);
-    // guRotate(rotX, painting->pitch, 1.0f, 0.0f, 0.0f);
-    // guRotate(rotY, painting->yaw, 0.0f, 1.0f, 0.0f);
-    // guScale(scale, sizeRatio, sizeRatio, sizeRatio);
-
-    // gSPMatrix(gfx++, translate, G_MTX_MODELVIEW | G_MTX_MUL | G_MTX_PUSH);
-    // gSPMatrix(gfx++, rotX,      G_MTX_MODELVIEW | G_MTX_MUL | G_MTX_NOPUSH);
-    // gSPMatrix(gfx++, rotY,      G_MTX_MODELVIEW | G_MTX_MUL | G_MTX_NOPUSH);
-    // gSPMatrix(gfx++, scale,     G_MTX_MODELVIEW | G_MTX_MUL | G_MTX_NOPUSH);
-    // gSPEndDisplayList(gfx);
-
-    // return dlist;
+    dlist[0] = DL_PACK_OP(DL_CMD_MTX_PUSH);
+    dlist[1] = DL_PACK_OP(DL_CMD_MTX_MUL) | DL_PACK_PTR(matrix);
+    dlist[2] = DL_PACK_OP(DL_CMD_END);
+    return (Gfx *) dlist;
 }
 
 /**
@@ -951,12 +955,13 @@ Gfx *painting_ripple_image(struct Painting *painting) {
     u8 **textures = segmented_to_virtual(painting->textureArray);
     Gfx *dlist = alloc_display_list((imageCount + 6) * sizeof(Gfx));
     Gfx *gfx = dlist;
+    Gfx *transform = painting_model_view_transform(painting);
 
-    if (dlist == NULL) {
-        return dlist;
+    if (dlist == NULL || transform == NULL) {
+        return NULL;
     }
 
-    gSPDisplayList(gfx++, painting_model_view_transform(painting));
+    gSPDisplayList(gfx++, transform);
     gSPDisplayList(gfx++, dl_paintings_rippling_begin);
     gSPDisplayList(gfx++, painting->rippleDisplayList);
 
@@ -990,12 +995,13 @@ Gfx *painting_ripple_env_mapped(struct Painting *painting) {
     u8 **tArray = segmented_to_virtual(painting->textureArray);
     Gfx *dlist = alloc_display_list(7 * sizeof(Gfx));
     Gfx *gfx = dlist;
+    Gfx *transform = painting_model_view_transform(painting);
 
-    if (dlist == NULL) {
-        return dlist;
+    if (dlist == NULL || transform == NULL) {
+        return NULL;
     }
 
-    gSPDisplayList(gfx++, painting_model_view_transform(painting));
+    gSPDisplayList(gfx++, transform);
     gSPDisplayList(gfx++, dl_paintings_env_mapped_begin);
     gSPDisplayList(gfx++, painting->rippleDisplayList);
 
@@ -1023,11 +1029,18 @@ Gfx *display_painting_rippling(struct Painting *painting) {
     s16 *neighborTris = segmented_to_virtual(seg2_painting_mesh_neighbor_tris);
     s16 numVtx = mesh[0];
     s16 numTris = mesh[numVtx * 3 + 1];
-    Gfx *dlist;
+    Gfx *dlist = NULL;
 
     // Generate the mesh and its lighting data
     painting_generate_mesh(painting, mesh, numVtx);
+    if (gPaintingMesh == NULL) {
+        return NULL;
+    }
     painting_calculate_triangle_normals(mesh, numVtx, numTris);
+    if (gPaintingTriNorms == NULL) {
+        mem_pool_free(gEffectsMemoryPool, gPaintingMesh);
+        return NULL;
+    }
     painting_average_vertex_normals(neighborTris, numVtx);
 
     // Map the painting's texture depending on the painting's texture type.
@@ -1052,11 +1065,12 @@ Gfx *display_painting_rippling(struct Painting *painting) {
 Gfx *display_painting_not_rippling(struct Painting *painting) {
     Gfx *dlist = alloc_display_list(4 * sizeof(Gfx));
     Gfx *gfx = dlist;
+    Gfx *transform = painting_model_view_transform(painting);
 
-    if (dlist == NULL) {
-        return dlist;
+    if (dlist == NULL || transform == NULL) {
+        return NULL;
     }
-    gSPDisplayList(gfx++, painting_model_view_transform(painting));
+    gSPDisplayList(gfx++, transform);
     gSPDisplayList(gfx++, painting->normalDisplayList);
     gSPPopMatrix(gfx++, G_MTX_MODELVIEW);
     gSPEndDisplayList(gfx);
@@ -1276,13 +1290,13 @@ Gfx *geo_painting_update(s32 callContext, UNUSED struct GraphNode *node, UNUSED 
     if (callContext != GEO_CONTEXT_RENDER) {
         gLastPaintingUpdateCounter = gAreaUpdateCounter - 1;
         gPaintingUpdateCounter = gAreaUpdateCounter;
-    } else {
+    } else if (gMarioObject != NULL) {
         gLastPaintingUpdateCounter = gPaintingUpdateCounter;
         gPaintingUpdateCounter = gAreaUpdateCounter;
 
         // Store Mario's floor and position
         find_floor(FFIELD(gMarioObject, oPosX), FFIELD(gMarioObject, oPosY), FFIELD(gMarioObject, oPosZ), &surface);
-        gPaintingMarioFloorType = surface->type;
+        gPaintingMarioFloorType = surface != NULL ? surface->type : SURFACE_DEFAULT;
         gPaintingMarioXPos = FFIELD(gMarioObject, oPosX);
         gPaintingMarioYPos = FFIELD(gMarioObject, oPosY);
         gPaintingMarioZPos = FFIELD(gMarioObject, oPosZ);
