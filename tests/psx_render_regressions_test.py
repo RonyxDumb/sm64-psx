@@ -11,6 +11,15 @@ from psx_static_mesh import Triangle, Vertex, compile_mesh, emit_list, read_comb
 
 
 class RendererRegressionTests(unittest.TestCase):
+    def test_menu_faces_in_front_of_gte_near_plane(self):
+        # GTE H = ONE * half-screen-height / (fov * 45).
+        menu = (ROOT / "levels/menu/geo.c").read_text()
+        self.assertIn("GEO_SCALE(0, 19661)", menu)
+        scale = 19661 / 65536
+        near_z = (4096 * 120 / (38 * 45)) / 2
+        self.assertGreater(scale * (1000 - 8 * 30), near_z)
+        self.assertLess(scale * 20000, 8000)
+
     def test_file_select_front_faces_not_occluded_on_ps1(self):
         menu = (ROOT / "levels/menu/geo.c").read_text()
         level = (ROOT / "levels/menu/leveldata.c").read_text()

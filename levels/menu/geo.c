@@ -167,8 +167,12 @@ const GeoLayout geo_menu_file_select_strings_and_menu_cursor[] = {
          GEO_CAMERA_FRUSTUM(MENU_CAMERA_FOV, 100, 25000),
          GEO_OPEN_NODE(),
 #ifdef TARGET_PSX
-            // Fit the 20,000-unit depth and the 9x backdrop in the signed GTE matrix.
-            GEO_SCALE(0, 6554),
+            /* Scale camera and models together: perspective remains unchanged.
+             * The old 0.10 scale put menu faces at Z~76, behind the PS1
+             * near plane (GTE H/2 ~144), so every Mario save thumbnail was
+             * clipped. At 0.30 the faces are at Z~228, while the farthest
+             * 20,000-unit menu geometry stays within MAX_Z=8000. */
+            GEO_SCALE(0, 19661),
             GEO_OPEN_NODE(),
 #endif
             GEO_CAMERA(0, 0, 0, 1000, 0, 0, 0, 0x00000000),
