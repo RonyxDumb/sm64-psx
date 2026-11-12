@@ -23,10 +23,11 @@ class RendererRegressionTests(unittest.TestCase):
         memory = (ROOT / "src/game/memory.c").read_text()
         mario = (ROOT / "src/game/mario.c").read_text()
         interaction = (ROOT / "src/game/interaction.c").read_text()
-        for identifier in ("anim_5F", "anim_60", "anim_61", "anim_9C", "anim_9D"):
+        for identifier in ("anim_09", "anim_0B", "anim_0C", "anim_26", "anim_5F", "anim_60", "anim_61", "anim_9C", "anim_9D"):
             self.assertIn(identifier, converter)
         self.assertIn("has_xzpos = True\n        has_ypos = True", converter)
         self.assertIn("is_anim_root_motion_preserved", renderer)
+        self.assertIn("gCurAnimType == ANIM_TYPE_NO_TRANSLATION && is_anim_root_motion_preserved", renderer)
         self.assertIn("sample_mario_root_translation", mario)
         self.assertIn("mario_anim_data_bytes = segment_size - just_table_size", memory)
         self.assertIn("q32_find_wall_collision(&newMarioXq, &newMarioYq, &newMarioZq, q(60), q(50))", interaction)

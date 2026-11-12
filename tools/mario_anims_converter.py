@@ -25,7 +25,12 @@ ANIM_FLAG_PSX_ROOT_MOTION = (1 << 8)
 # These cutscenes move Mario in world space using their root X/Z tracks.
 # Without them the packed PS1 animations shift attribute indices and the
 # character walks the wrong way while interacting with doors.
-PRESERVE_ROOT_MOTION = {"anim_5F", "anim_60", "anim_61", "anim_9C", "anim_9D"}
+PRESERVE_ROOT_MOTION = {
+    "anim_09", "anim_0B", "anim_0C",  # Handstand/pole vertical placement
+    "anim_26",                      # Final star takeoff root animation
+    "anim_5F", "anim_60", "anim_61",  # Pull/push/key doors
+    "anim_9C", "anim_9D",            # Star doors
+}
 
 flags_mapping = {}
 values_to_indices_name_mapping = {}

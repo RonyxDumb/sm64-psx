@@ -498,6 +498,12 @@ static void geo_process_animated_part(struct GraphNodeAnimatedPart* node) {
 			}
 			gfx_modelview_translatei(translation);
 		} else {
+			/* ANIM_TYPE_NO_TRANSLATION renders no root offset, but
+			 * the game still consumes root X/Y/Z for world-space motion.
+			 * Skip their packed index pairs before decoding bone rotations. */
+			if(gCurAnimType == ANIM_TYPE_NO_TRANSLATION && is_anim_root_motion_preserved) {
+				gCurrAnimAttribute += 6;
+			}
 			gfx_modelview_translatei(node->translation);
 		}
 		gCurAnimType = ANIM_TYPE_ROTATION;
