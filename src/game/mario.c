@@ -180,6 +180,36 @@ s32 is_anim_past_frame(struct MarioState *m, s16 animFrame) {
  * Rotates the animation's translation into the global coordinate system
  * and returns the animation's flags.
  */
+/*
+ * Mario's PS1 animation bank is compressed at half the original positional
+ * sample rate. The renderer interpolates these tracks (including constant
+ * tracks whose value is stored in the index table), but root motion must use
+ * the same decoding or cutscenes can push Mario in the wrong direction.
+ */
+static s16 sample_mario_root_translation(s16 frame, u16 **attributes, const s16 *values,
+                                         bool compressed) {
+    if (!compressed) {
+        return values[retrieve_animation_index(frame, attributes, NULL)];
+    }
+
+    if ((*attributes)[0] == 0) {
+        s16 constant = (s16) (*attributes)[1];
+        *attributes += 2;
+        return constant;
+    }
+
+    u32 nextIndex;
+    u32 index = retrieve_animation_index(frame / 2, attributes, &nextIndex);
+    s32 value = values[index];
+    if ((frame & 1) && nextIndex != index) {
+        s32 diff = (s32) values[nextIndex] - value;
+        if (diff >= -0x7FFF && diff <= 0x7FFF) {
+            value += diff / 2;
+        }
+    }
+    return (s16) value;
+}
+
 s16 find_mario_anim_flags_and_translation(struct Object *obj, s32 yaw, Vec3s translation) {
     f32 dx;
     f32 dz;
@@ -192,9 +222,10 @@ s16 find_mario_anim_flags_and_translation(struct Object *obj, s32 yaw, Vec3s tra
     f32 s = (f32) sins(yaw);
     f32 c = (f32) coss(yaw);
 
-    dx = *(animValues + (retrieve_animation_index(animFrame, &animIndex, NULL))) / 4.0f;
-    translation[1] = *(animValues + (retrieve_animation_index(animFrame, &animIndex, NULL))) / 4.0f;
-    dz = *(animValues + (retrieve_animation_index(animFrame, &animIndex, NULL))) / 4.0f;
+    bool compressed = (curAnim->flags & ANIM_FLAG_7) != 0;
+    dx = sample_mario_root_translation(animFrame, &animIndex, animValues, compressed) / 4.0f;
+    translation[1] = sample_mario_root_translation(animFrame, &animIndex, animValues, compressed) / 4.0f;
+    dz = sample_mario_root_translation(animFrame, &animIndex, animValues, compressed) / 4.0f;
 
     translation[0] = (dx * c) + (dz * s);
     translation[2] = (-dx * s) + (dz * c);
