@@ -20,6 +20,13 @@ class RendererRegressionTests(unittest.TestCase):
         self.assertIn("coin_seg3_dl_03007780", coin)
         self.assertIn("dl_tex_block_menu_save_button_base", menu)
 
+    def test_rippling_paintings_restore_material_state_every_frame(self):
+        painting = (ROOT / "src/game/paintings.c").read_text()
+        self.assertIn("alloc_display_list((imageCount + 9) * sizeof(Gfx))", painting)
+        self.assertIn("gDPSetCombineMode(gfx++, G_CC_MODULATERGBA, G_CC_MODULATERGBA);", painting)
+        self.assertIn("gDPSetCombineMode(gfx++, G_CC_DECALRGB, G_CC_DECALRGB);", painting)
+        self.assertIn("gSPSetGeometryMode(gfx++, G_LIGHTING | G_TEXTURE_GEN);", painting)
+
     def test_painting_material_state_is_restored_for_every_picture(self):
         painting = (ROOT / "levels/castle_inside/painting.inc.c").read_text()
         preamble_start = painting.index("static const Gfx inside_castle_seg7_dl_07021A48[]")
