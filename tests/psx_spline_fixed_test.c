@@ -19,19 +19,19 @@ int main(void) {
     for(int state = 1; state <= 5; state++) {
         for(int t = 0; t <= 1000; t++) {
             int32_t w[4]; double orig[4];
-            psx_spline_weights_q12(state, t, w);
+            psx_spline_weights_q16(state, t, w);
             original_weights(state, t/1000.0, orig);
             int32_t total = 0;
             for(int i = 0; i < 4; ++i) {
                 assert(w[i] >= 0 && w[i] <= PSX_SPLINE_ONE);
                 total += w[i];
-                double err = fabs(w[i]/4096.0-orig[i]);
+                double err = fabs(w[i]/65536.0-orig[i]);
                 if(err > max_err) max_err = err;
             }
             assert(total == PSX_SPLINE_ONE);
         }
     }
-    printf("PS1 Q12 cinematic splines: max weight delta = %.6f\n", max_err);
-    assert(max_err < 0.002);
+    printf("PS1 Q16 cinematic splines: max weight delta = %.6f\n", max_err);
+    assert(max_err < 0.0002);
     return 0;
 }

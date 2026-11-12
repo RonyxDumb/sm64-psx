@@ -2,24 +2,24 @@
 
 #include <stdint.h>
 
-/* PS1 cinematic path: Q20.12 cubic interpolation. No software floating point
- * in weight evaluation; 1000-tick progress is converted to Q12 only once. */
-#define PSX_SPLINE_ONE 4096
+/* PS1 cinematic path: Q16 cubic interpolation. No software floating point
+ * in weight evaluation; 1000-tick progress is converted to Q16 only once. */
+#define PSX_SPLINE_ONE 65536
 
-static inline int32_t psx_spline_mul_q12(int32_t a, int32_t b) {
-    return (int32_t) (((int64_t) a * b) >> 12);
+static inline int32_t psx_spline_mul_q16(int32_t a, int32_t b) {
+    return (int32_t) (((int64_t) a * b)  >> 16);
 }
 
-static inline void psx_spline_weights_q12(int state, int progress_milli, int32_t result[4]) {
+static inline void psx_spline_weights_q16(int state, int progress_milli, int32_t result[4]) {
     if(progress_milli < 0) progress_milli = 0;
     if(progress_milli > 1000) progress_milli = 1000;
 
     int32_t t = progress_milli * PSX_SPLINE_ONE / 1000;
     int32_t inv = PSX_SPLINE_ONE - t;
-    int32_t t2 = psx_spline_mul_q12(t, t);
-    int32_t t3 = psx_spline_mul_q12(t2, t);
-    int32_t inv2 = psx_spline_mul_q12(inv, inv);
-    int32_t inv3 = psx_spline_mul_q12(inv2, inv);
+    int32_t t2 = psx_spline_mul_q16(t, t);
+    int32_t t3 = psx_spline_mul_q16(t2, t);
+    int32_t inv2 = psx_spline_mul_q16(inv, inv);
+    int32_t inv3 = psx_spline_mul_q16(inv2, inv);
 
     switch(state) {
         case 1: /* CURVE_BEGIN_1 */
@@ -58,7 +58,7 @@ static inline void psx_spline_weights_q12(int state, int progress_milli, int32_t
             return;
     }
 
-    /* Compensate for independent Q12 truncation so the interpolation retains
+    /* Compensate for independent Q16 truncation so the interpolation retains
      * constant trajectories exactly, including across state transitions. */
     int32_t sum = 0;
     int largest = 0;

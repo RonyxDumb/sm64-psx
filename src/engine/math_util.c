@@ -781,7 +781,7 @@ s32 anim_spline_poll(Vec3f result) {
 #ifdef TARGET_PSX
     int32_t weights[4];
     int64_t resultq[3] = {0, 0, 0};
-    psx_spline_weights_q12(gSplineState, gSplineKeyframeProgressMilli, weights);
+    psx_spline_weights_q16(gSplineState, gSplineKeyframeProgressMilli, weights);
     for (int i = 0; i < 4; i++) {
         for (int axis = 0; axis < 3; axis++) {
             resultq[axis] += (int64_t) weights[i] * gSplineKeyframe[i][axis + 1];
@@ -789,7 +789,7 @@ s32 anim_spline_poll(Vec3f result) {
     }
     /* The camera still consumes Vec3f, so convert just the three outputs. */
     for (int axis = 0; axis < 3; axis++) {
-        result[axis] = qtof((q32) resultq[axis]);
+        result[axis] = qtof((q32) (resultq[axis] / 16));
     }
     gSplineKeyframeProgressMilli += gSplineKeyframe[0][0];
     s32 advance = gSplineKeyframeProgressMilli >= 1000;
