@@ -18,7 +18,9 @@ IGNORED = {
     "gsDPSetFogColor", "gsSPFogPosition", "gsSPFogFactor", "gsDPSetTextureFilter",
     "gsDPSetTexturePersp", "gsDPSetTextureLOD", "gsDPSetPrimColor", "gsSPNoOp",
 }
-WORLD_EDGE_LIMITS = (1024, 2048, 4096, 8192, 32768)
+# Prefer finer build-time tessellation, but never exceed the original overlay
+# allocation: compile_mesh backs off until native_size <= old_size.
+WORLD_EDGE_LIMITS = (512, 768, 1024, 2048, 4096, 8192, 32768)
 VERTICES_PER_BATCH = 256
 
 

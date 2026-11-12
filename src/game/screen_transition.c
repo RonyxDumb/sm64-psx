@@ -182,11 +182,13 @@ s32 render_textured_transition(s8 fadeTimer, s8 transTime, struct WarpTransition
     create_dl_ortho_matrix();
     gfx_emit_env_color_alpha_full(0x000000);
     gfx_emit_tex(segmented_to_virtual(sTextureTransitionID[texID]));
+	/* N64 mask textures use bottom-left UVs; PS1 UI quads use top-left.
+	 * Flip only the textured mask, not the solid surrounding rectangles. */
 	if(transTexType == TRANS_TYPE_MIRROR) {
-		gfx_emit_screen_quad(centerTransX, centerTransY - texTransRadius, centerTransX + texTransRadius, centerTransY + texTransRadius);
-		gfx_emit_screen_quad(centerTransX, centerTransY - texTransRadius, centerTransX - texTransRadius, centerTransY + texTransRadius);
+		gfx_emit_screen_quad_vflip(centerTransX, centerTransY - texTransRadius, centerTransX + texTransRadius, centerTransY + texTransRadius);
+		gfx_emit_screen_quad_vflip(centerTransX, centerTransY - texTransRadius, centerTransX - texTransRadius, centerTransY + texTransRadius);
 	} else {
-		gfx_emit_screen_quad(centerTransX, centerTransY - texTransRadius, centerTransX + texTransRadius, centerTransY + texTransRadius);
+		gfx_emit_screen_quad_vflip(centerTransX, centerTransY - texTransRadius, centerTransX + texTransRadius, centerTransY + texTransRadius);
 	}
 	// AAA
 	// B.C

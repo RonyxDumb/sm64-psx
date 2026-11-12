@@ -42,7 +42,10 @@ const GeoLayout geo_menu_mario_save_button_fade[] = {
       GEO_SCALE(0x00, 524288),
       GEO_OPEN_NODE(),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_mario_save_button_base),
+#ifndef TARGET_PSX
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_save_button_fade_back),
+#endif
+         /* PS1 has no depth buffer: the reverse fade can obscure the face. */
       GEO_CLOSE_NODE(),
    GEO_CLOSE_NODE(),
    GEO_END(),
@@ -68,7 +71,9 @@ const GeoLayout geo_menu_mario_new_button_fade[] = {
       GEO_SCALE(0x00, 524288),
       GEO_OPEN_NODE(),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_mario_new_button_base),
+#ifndef TARGET_PSX
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_save_button_fade_back),
+#endif
       GEO_CLOSE_NODE(),
    GEO_CLOSE_NODE(),
    GEO_END(),

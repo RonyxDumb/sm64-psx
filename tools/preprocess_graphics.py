@@ -13,7 +13,9 @@ if len(sys.argv) < 3:
 
 out_path = sys.argv[2]
 assert out_path.endswith(".processed.c"), "ensure the output path is correct"
-should_tessellate = "areas/" in out_path
+# Tessellate static area fallback and File Select models at build time.
+# Animated actors retain their original vertex/animation pipeline.
+should_tessellate = "areas/" in out_path or "levels/menu/leveldata." in out_path
 
 definitions: dict[str, int] = {}
 
@@ -203,7 +205,7 @@ cur_selected_vtx_in_dl: str | None = None
 # Keep static level geometry below the size at which PS1 affine texture
 # distortion and clipping become severe. Runtime tessellation remains as a
 # fallback for dynamic geometry and clip-plane crossings.
-TESSELLATION_THRESHOLD = 256
+TESSELLATION_THRESHOLD = 128 if "levels/menu/leveldata." in out_path else 256
 TESSELLATION_THRESHOLD_SQ = TESSELLATION_THRESHOLD * TESSELLATION_THRESHOLD
 
 # repeatedly split large triangles in the queue

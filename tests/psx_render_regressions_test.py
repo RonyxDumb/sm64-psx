@@ -11,6 +11,24 @@ from psx_static_mesh import Triangle, Vertex, compile_mesh, emit_list, read_comb
 
 
 class RendererRegressionTests(unittest.TestCase):
+    def test_file_select_front_faces_not_occluded_on_ps1(self):
+        menu = (ROOT / "levels/menu/geo.c").read_text()
+        level = (ROOT / "levels/menu/leveldata.c").read_text()
+        self.assertIn("#ifndef TARGET_PSX\\n         GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_save_button_fade_back)", menu)
+        self.assertIn("gsSPClearGeometryMode(G_LIGHTING | G_CULL_BACK | G_CULL_FRONT)", level)
+
+    def test_warp_transition_textures_flipped_not_black_surround(self):
+        transition = (ROOT / "src/game/screen_transition.c").read_text()
+        self.assertEqual(transition.count("gfx_emit_screen_quad_vflip(centerTransX,"), 3)
+        self.assertIn("gfx_emit_screen_quad(0, 0, XRES, centerTransY - texTransRadius + 1)", transition)
+
+    def test_offline_tessellation_stays_within_overlay_budget(self):
+        mesh = (ROOT / "tools/psx_static_mesh.py").read_text()
+        pre = (ROOT / "tools/preprocess_graphics.py").read_text()
+        self.assertIn("WORLD_EDGE_LIMITS = (512, 768, 1024, 2048, 4096, 8192, 32768)", mesh)
+        self.assertIn("if native_size <= old_size:", mesh)
+        self.assertIn('128 if "levels/menu/leveldata." in out_path else 256', pre)
+
     def test_shared_material_display_lists_preserve_original_commands(self):
         jit = (ROOT / "src/port/gfx/gfx_rsp_jit.c").read_text()
         self.assertIn("if(!was_useful) return false;", jit)
