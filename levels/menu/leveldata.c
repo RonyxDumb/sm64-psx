@@ -95,7 +95,7 @@ static const Gfx dl_vertex_menu_save_button_borders[] = {
 // 0x07003218 - 0x07003258
 static const Gfx dl_vertex_menu_save_button_front[] = {
 #ifdef TARGET_PSX
-    /* On PS1 these menu thumbnails must not be darkened by the 3-D lights. */
+    // On PS1 these thumbnails must not be darkened by 3-D lighting.
     gsSPClearGeometryMode(G_LIGHTING | G_CULL_BACK | G_CULL_FRONT),
 #endif
     gsSPVertex(vertex_menu_save_button_front, 4, 0),
