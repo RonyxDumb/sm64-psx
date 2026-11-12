@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 import struct
+import subprocess
 import zlib
 
 TILE_W = 32
@@ -182,6 +183,17 @@ def emit_bin(manifest_path: Path, tile_dir: Path, output: Path) -> None:
     output.write_bytes(blob)
     print(f"wrote {output} ({len(blob)} bytes, external EXT.DAT metadata)")
 
+def convert_tiles(manifest_path: Path, tile_dir: Path, converter: Path, listing: Path) -> None:
+    skyboxes = json.loads(manifest_path.read_text(encoding="utf-8"))["skyboxes"]
+    converted = []
+    for name in SKYBOX_RUNTIME_ORDER:
+        for tile_id in skyboxes[name]["tiles"]:
+            tile = tile_dir / f"{name}.{tile_id}.rgba16.png"
+            payload = tile.with_suffix(".fulldata")
+            subprocess.run([str(converter.resolve()), "4", str(tile), str(payload)], check=True)
+            converted.append(f"{payload}\n")
+    listing.write_text("".join(converted), encoding="utf-8")
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -192,6 +204,13 @@ def main() -> int:
     p.add_argument("manifest", type=Path)
     p.add_argument("names", nargs="+")
     p.set_defaults(run=lambda a: extract_assets(a.legacy_dir, a.tile_dir, a.manifest, a.names))
+
+    p = sub.add_parser("convert")
+    p.add_argument("manifest", type=Path)
+    p.add_argument("tile_dir", type=Path)
+    p.add_argument("converter", type=Path)
+    p.add_argument("listing", type=Path)
+    p.set_defaults(run=lambda a: convert_tiles(a.manifest, a.tile_dir, a.converter, a.listing))
 
     p = sub.add_parser("emit-bin")
     p.add_argument("manifest", type=Path)

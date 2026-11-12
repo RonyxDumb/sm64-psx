@@ -29,10 +29,23 @@ def pack(archive_path: Path, paths: list[Path]) -> None:
         if len(contents) < HEADER_BYTES:
             raise ValueError(f"short texture header: {path}")
         width, height = struct.unpack_from("<HH", contents)
-        size = CLUT_BYTES + (width * height // 2)
+        source_row = width // 2
+        size = CLUT_BYTES + source_row * height
         payload = contents[HEADER_BYTES:]
         if width == 0 or height == 0 or width % 2 or len(payload) != size:
             raise ValueError(f"invalid 4-bpp texture payload: {path}: {width}x{height} ({len(payload)} bytes, expected {size})")
+        # The GPU copies 16-bit words. Pad each row of a narrow texture
+        # such as the 14-pixel font so DMA keeps the original row stride.
+        vram_row = ((width + 3) // 4) * 2
+        if vram_row != source_row:
+            pixels = payload[CLUT_BYTES:]
+            padding = bytes(vram_row - source_row)
+            payload = payload[:CLUT_BYTES] + b"".join(
+                pixels[y:y + source_row] + padding for y in range(0, len(pixels), source_row)
+            )
+            size = len(payload)
+        if size % ALIGNMENT:
+            raise ValueError(f"texture does not fit a whole DMA word: {path}")
         if size > BANK_BYTES:
             raise ValueError(f"texture exceeds CD bank: {path}")
 

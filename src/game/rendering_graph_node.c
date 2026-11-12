@@ -624,10 +624,9 @@ static void geo_process_shadow(struct GraphNodeShadow* node) {
 		gfx_emit_mtx_set(mtx_alloc);
 		bool is_square = node->shadowType == SHADOW_SQUARE_PERMANENT || node->shadowType == SHADOW_SQUARE_SCALABLE || node->shadowType == SHADOW_SQUARE_TOGGLABLE;
 		gfx_emit_shadow(is_square, scale_shadow_with_distance(node->shadowScale / 2, floor_distance), rescale_opacity(dim_shadow_with_distance(node->shadowSolidity, floor_distance)));
-		if(node->node.children) {
-			geo_process_node_and_siblings(node->node.children);
-		}
+		matrix_changed = true;
 	}
+	geo_try_process_children(&node->node);
 }
 
 static void geo_process_master_list(struct GraphNodeMasterList* node) {

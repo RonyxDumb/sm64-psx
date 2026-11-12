@@ -6,6 +6,7 @@
 #include "engine/graph_node.h"
 #include "engine/math_util.h"
 #include "game/game_init.h"
+#include "game/ingame_menu.h"
 #include "geo_misc.h"
 #include "gfx_dimensions.h"
 #include "memory.h"
@@ -59,8 +60,6 @@ Vtx *vertex_transition_color(struct WarpTransitionData *transData, u8 alpha) {
     }
     return verts;
 }
-
-void create_dl_identity_matrix(void);
 
 s32 dl_transition_color(s8 fadeTimer, u8 transTime, struct WarpTransitionData *transData, u8 alpha) {
 #ifdef RSP_DL
@@ -180,6 +179,7 @@ s32 render_textured_transition(s8 fadeTimer, s8 transTime, struct WarpTransition
     s16 centerTransY = center_tex_transition_y(transData, texTransTime, texTransPos);
     s16 texTransRadius = calc_tex_transition_radius(fadeTimer, transTime, transData);
 
+    create_dl_ortho_matrix();
     gfx_emit_env_color_alpha_full(0x000000);
     gfx_emit_tex(segmented_to_virtual(sTextureTransitionID[texID]));
 	if(transTexType == TRANS_TYPE_MIRROR) {
@@ -194,12 +194,17 @@ s32 render_textured_transition(s8 fadeTimer, s8 transTime, struct WarpTransition
     gfx_emit_tex(NULL);
 	if(centerTransX - texTransRadius >= 0) {
 		gfx_emit_screen_quad(0, centerTransY - texTransRadius, centerTransX - texTransRadius + 3, centerTransY + texTransRadius); // B
+	}
+	if(centerTransX + texTransRadius <= XRES) {
 		gfx_emit_screen_quad(centerTransX + texTransRadius - 3, centerTransY - texTransRadius, XRES, centerTransY + texTransRadius); // C
 	}
 	if(centerTransY - texTransRadius >= 0) {
 		gfx_emit_screen_quad(0, 0, XRES, centerTransY - texTransRadius + 1); // A
+	}
+	if(centerTransY + texTransRadius <= YRES) {
 		gfx_emit_screen_quad(0, centerTransY + texTransRadius - 1, XRES, YRES); // D
 	}
+	gfx_emit_set_ortho(false);
 	sTransitionTextureFadeCount[fadeTimer] += transData->texTimer;
     return set_and_reset_transition_fade_timer(fadeTimer, transTime);
 }

@@ -12,6 +12,14 @@ extern u8 menu_font_lut[];
 extern u8 dl_menu_ia8_text_begin[];
 extern u8 dl_menu_ia8_text_end[];
 extern u8 dl_menu_rgba16_wood_course[];
+#ifdef TARGET_PSX
+extern const u8 texture_menu_course_upper[];
+extern const u8 texture_menu_course_lower[];
+#ifdef VERSION_EU
+extern const u8 texture_menu_niveau_upper[];
+extern const u8 texture_menu_kurs_upper[];
+#endif
+#endif
 #ifdef VERSION_EU
 extern u8 dl_menu_rgba16_wood_course_end[];
 extern u8 dl_menu_texture_course_upper[];

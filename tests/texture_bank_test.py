@@ -69,6 +69,20 @@ class TextureBankTest(unittest.TestCase):
             self.assertNotEqual(p.returncode, 0)
             self.assertIn("invalid 4-bpp", p.stderr)
 
+    def test_14_pixel_font_preserves_each_dma_row(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            src = folder / "font.fulldata"
+            palette = bytes(range(32))
+            rows = [bytes([y + 1]) * 7 for y in range(14)]
+            src.write_bytes(struct.pack("<HH12x", 14, 14) + palette + b"".join(rows))
+            listing = folder / "input.txt"
+            listing.write_text(str(src) + "\n")
+            archive = folder / "archive.bin"
+            subprocess.run([sys.executable, str(SCRIPT), str(archive), str(listing)], check=True)
+            expected = palette + b"".join(row + b"\0" for row in rows)
+            self.assertEqual(archive.read_bytes()[:len(expected)], expected)
+
     def test_ps1_and_packer_bank_sizes_agree(self):
         runtime = (ROOT / "src/port/psx/gfx_texture_psx.c").read_text()
         self.assertRegex(runtime, r"#define TEX_BANK_SECTORS 4\b")

@@ -321,13 +321,36 @@ $(PNGS_WITH_BLACK_TRANSPARENCY:%.png=$(BUILD_DIR)/%.fulldata): $(BUILD_DIR)/%.fu
 ALL_PNGS := $(foreach png,$(filter-out %/cake.png %/cake_eu.png textures/skyboxes/%.png,$(filter %.png,$(file <.assets-local.txt))),$(wildcard $(png))) dualshock_graphic.png
 ALL_FULLDATAS := $(ALL_PNGS:%.png=$(BUILD_DIR)/%.fulldata)
 
+SKYBOX_TOOL := $(TOOLS_DIR)/gen_psx_skybox_assets.py
+SKYBOX_DIR := $(BUILD_DIR)/skybox
+SKYBOX_NAMES := bbh bidw bitfs bits ccm cloud_floor clouds ssl water wdw
+SKYBOX_SOURCES := $(SKYBOX_NAMES:%=$(SKYBOX_DIR)/%_skybox.c)
+SKYBOX_MANIFEST := $(SKYBOX_DIR)/manifest.json
+SKYBOX_PAYLOADS := $(SKYBOX_DIR)/fulldata_list.txt
+SKYBOX_META := $(SKYBOX_DIR)/metadata.bin
 
-$(BUILD_DIR)/tex_pack: $(ALL_FULLDATAS) tools/pack_textures.py
+$(SKYBOX_SOURCES): $(SKYBOX_DIR)/%_skybox.c: textures/skyboxes/%.png $(SKYCONV)
+>	$(V)mkdir -p $(SKYBOX_DIR)
+>	$(V)$(SKYCONV) --type sky --split $< $(SKYBOX_DIR)
+
+$(SKYBOX_MANIFEST): $(SKYBOX_SOURCES) $(SKYBOX_TOOL)
+>	$(V)$(PYTHON) $(SKYBOX_TOOL) extract $(SKYBOX_DIR) $(SKYBOX_DIR)/tiles $@ $(SKYBOX_NAMES)
+
+$(SKYBOX_PAYLOADS): $(SKYBOX_MANIFEST) $(SKYBOX_TOOL) $(TOOLS_DIR)/build/convert_image_psx
+>	$(V)$(PYTHON) $(SKYBOX_TOOL) convert $< $(SKYBOX_DIR)/tiles $(TOOLS_DIR)/build/convert_image_psx $@.tmp
+>	$(V)mv $@.tmp $@
+
+$(SKYBOX_META): $(BUILD_DIR)/tex_pack $(SKYBOX_MANIFEST) $(SKYBOX_TOOL)
+>	$(V)$(PYTHON) $(SKYBOX_TOOL) emit-bin $(SKYBOX_MANIFEST) $(SKYBOX_DIR)/tiles $@.tmp
+>	$(V)mv $@.tmp $@
+
+$(BUILD_DIR)/tex_pack: $(ALL_FULLDATAS) $(SKYBOX_PAYLOADS) tools/pack_textures.py
 >	@$(PRINT) "$(GREEN)Packing all images$(NO_COL)\n"
 >	$(V)rm -f $(BUILD_DIR)/fulldata_list.txt
 >	$(V)for fulldata in $(ALL_FULLDATAS); do \
 >		echo $$fulldata >> $(BUILD_DIR)/fulldata_list.txt ;\
 >	done
+>	$(V)cat $(SKYBOX_PAYLOADS) >> $(BUILD_DIR)/fulldata_list.txt
 >	$(V)$(PYTHON) tools/pack_textures.py $@.tmp $(BUILD_DIR)/fulldata_list.txt
 >	$(V)for png in $(ALL_PNGS); do \
 >		hexdump -v -e '1/1 "0x%X,"' $(BUILD_DIR)/$${png%.png}.texheader > $(BUILD_DIR)/$${png%.png}.inc.c ;\
@@ -409,9 +432,9 @@ $(BIN_SEG_FILES) $(GROUP_SEG_FILES) $(EXTRA_ASSET_ELFS): $(BUILD_DIR)/%.elf: $(B
 >	$(V)mv $@.tmp $@
 # Override for leveldata.elf, which otherwise matches the above pattern
 .SECONDEXPANSION:
-$(LEVEL_SEG_FILES): $(BUILD_DIR)/levels/%/leveldata.elf: $(BUILD_DIR)/levels/%/leveldata.o2 $(BUILD_DIR)/bin/$$(TEXTURE_BIN).elf
+$(LEVEL_SEG_FILES): $(BUILD_DIR)/levels/%/leveldata.elf: $(BUILD_DIR)/levels/%/leveldata.o2 $(BUILD_DIR)/bin/$$(TEXTURE_BIN).elf Makefile.psx.mk
 >	$(call print,Linking leveldata ELF file (at $(SEGMENT_ADDRESS)):,$<,$@)
->	$(V)$(EXT_LD) $(EXT_CFLAGS) -e 0 -Wl,-Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Wl,-Text_files_elf.ld -Wl,--unresolved-symbols=ignore-all -Wl,-Map -Wl,$@.map -Wl,--just-symbols=$(BUILD_DIR)/bin/$(TEXTURE_BIN).elf -o $@.tmp $<
+>	$(V)$(EXT_LD) $(EXT_CFLAGS) -e 0 -Wl,-Tdata=$(SEGMENT_ADDRESS) -EL -no-pie -G0 -Wl,-Text_files_elf.ld -Wl,-Map -Wl,$@.map -Wl,--just-symbols=$(BUILD_DIR)/bin/$(TEXTURE_BIN).elf -o $@.tmp $<
 >	$(V)$(OBJCOPY) -j .data $@.tmp
 >	$(V)mv $@.tmp $@
 
@@ -511,9 +534,10 @@ $(BUILD_DIR)/ext_files_sections_tmp.txt: $(BUILD_DIR)/ext_files_sections_plusmen
 
 
 
-$(BUILD_DIR)/ext_files_sections_noaudio.txt: $(BUILD_DIR)/ext_files_sections_tmp.txt $(BUILD_DIR)/tex_pack $(SFX_DATA_BIN)
+$(BUILD_DIR)/ext_files_sections_noaudio.txt: $(BUILD_DIR)/ext_files_sections_tmp.txt $(BUILD_DIR)/tex_pack $(SKYBOX_META) $(SFX_DATA_BIN)
 >	@cp $< $@.tmp
 >	@echo " $(BUILD_DIR)/tex_pack:0:$$(printf "%x" $$(wc -c <"$(BUILD_DIR)/tex_pack"))!_texture_data_segment:_texture_data_segment_end " >> $@.tmp
+>	@echo " $(SKYBOX_META):0:$$(printf "%x" $$(wc -c <"$(SKYBOX_META)"))!_skybox_meta_segment:_skybox_meta_segment_end " >> $@.tmp
 >	@echo " $(SFX_DATA_BIN):0:$$(printf "%x" $$(wc -c <"$(SFX_DATA_BIN)"))!_sfx_data_segment:_sfx_data_segment_end " >> $@.tmp
 >	@mv $@.tmp $@
 

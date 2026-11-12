@@ -733,7 +733,8 @@ void print_menu_generic_string(s16 x, s16 y, const u8 *str) {
                 break;
             default:
                 gfx_emit_tex(segmented_to_virtual(fontLUT[str[strPos]]));
-                gfx_emit_sprite(curX, curY);
+                // The menu font needs the active text color, including black on Star Select.
+                gfx_emit_screen_quad(curX, SCREEN_HEIGHT - curY, curX + 8, SCREEN_HEIGHT - curY - 8);
                 //gDPSetTextureImage(gDisplayListHead++, G_IM_FMT_IA, G_IM_SIZ_8b, 1, fontLUT[str[strPos]]);
                 //gDPLoadSync(gDisplayListHead++);
                 //gDPLoadBlock(gDisplayListHead++, G_TX_LOADTILE, 0, 0, 8 * 8 - 1, CALC_DXT(8, G_IM_SIZ_8b_BYTES));
@@ -743,7 +744,8 @@ void print_menu_generic_string(s16 x, s16 y, const u8 *str) {
 #ifndef VERSION_EU
                 if (mark != DIALOG_MARK_NONE) {
                     gfx_emit_tex(segmented_to_virtual(fontLUT[mark + 0xEF]));
-                    gfx_emit_sprite(curX + 6, curY - 7);
+                    gfx_emit_screen_quad(curX + 6, SCREEN_HEIGHT - curY + 7,
+                                         curX + 14, SCREEN_HEIGHT - curY - 1);
                     //gDPSetTextureImage(gDisplayListHead++, G_IM_FMT_IA, G_IM_SIZ_8b, 1, fontLUT[mark + 0xEF]);
                     //gDPLoadSync(gDisplayListHead++);
                     //gDPLoadBlock(gDisplayListHead++, G_TX_LOADTILE, 0, 0, 8 * 8 - 1, CALC_DXT(8, G_IM_SIZ_8b_BYTES));

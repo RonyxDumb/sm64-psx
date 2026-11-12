@@ -28,7 +28,7 @@ class RendererRegressionTests(unittest.TestCase):
         modulation = (ROOT / "src/port/gfx/gfx_texture_modulation.h").read_text()
         self.assertIn("if(decal_overlay)", modulation)
         self.assertIn("return 0x00808080u;", modulation)
-        self.assertIn("append_poly(&packet, v3, sxy3, flags & ~PRIM_FLAG_TEXTURED, storage)", renderer)
+        self.assertIn("append_poly(&packet, quad, sxy3, flags & ~PRIM_FLAG_TEXTURED, vertices)", renderer)
 
     def test_two_sided_billboards_survive_nclip(self):
         jit = (ROOT / "src/port/gfx/gfx_rsp_jit.c").read_text()
@@ -48,7 +48,8 @@ class RendererRegressionTests(unittest.TestCase):
     def test_levels_do_not_exhaust_gpu_packet_pool(self):
         renderer = (ROOT / "src/port/psx/gfx_dl_exec_psx.c").read_text()
         buffers = (ROOT / "src/port/psx/gfx_framebuffers_psx.c").read_text()
-        self.assertIn("#define SPARING_TESSELLATION 3", renderer)
+        self.assertIn("clip_and_draw_triangle(v0, v1, v2,", renderer)
+        self.assertNotIn("needs_clip_tessellation", renderer)
         self.assertIn("PACKET_RESERVE_WORDS 64", buffers)
         self.assertIn("if(header > pool_end - reserve)", buffers)
         self.assertIn("packet.header == discarded_packet", buffers)

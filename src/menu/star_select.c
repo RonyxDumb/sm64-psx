@@ -212,6 +212,18 @@ void print_course_number(void) {
 #endif
     u8 courseNum[4];
 
+#ifdef TARGET_PSX
+    const Texture *upper = texture_menu_course_upper;
+#ifdef VERSION_EU
+    if (language == LANGUAGE_FRENCH) upper = texture_menu_niveau_upper;
+    if (language == LANGUAGE_GERMAN) upper = texture_menu_kurs_upper;
+#endif
+    gfx_emit_env_color_alpha_full(0xFFFFFF);
+    gfx_emit_tex(segmented_to_virtual(upper));
+    gfx_emit_screen_quad(126, 113, 190, 81);
+    gfx_emit_tex(segmented_to_virtual(texture_menu_course_lower));
+    gfx_emit_screen_quad(126, 81, 190, 49);
+#else
     create_dl_translation_matrix(MENU_MTX_PUSH, 158.0f, 81.0f, 0.0f);
 
     // Full wood texture in JP & US, lower part of it on EU
@@ -245,6 +257,7 @@ void print_course_number(void) {
 #else
     gfx_emit_mtx_pop();
     gfx_emit_env_color_alpha_full(0xFFFFFF);
+#endif
 #endif
 
     int_to_str(gCurrCourseNum, courseNum);

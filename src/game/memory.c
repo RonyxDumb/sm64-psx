@@ -19,6 +19,7 @@
 #include "platform_info.h"
 #include <port/cd.h>
 #ifdef TARGET_PSX
+#include <port/gfx/gfx.h>
 #include <ps1/gpu.h>
 #endif
 
@@ -198,6 +199,10 @@ u32 main_pool_push_state(void) {
  * amount of free space left in the pool.
  */
 u32 main_pool_pop_state(void) {
+#ifdef TARGET_PSX
+	gfx_release_textures_in_range(gMainPoolState->listHeadL, main_pool_head_left);
+	gfx_release_textures_in_range(main_pool_head_right, gMainPoolState->listHeadR);
+#endif
 	main_pool_head_left = gMainPoolState->listHeadL;
 	main_pool_head_right = gMainPoolState->listHeadR;
 	gMainPoolState = gMainPoolState->prev;

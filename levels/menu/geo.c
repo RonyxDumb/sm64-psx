@@ -152,11 +152,16 @@ const GeoLayout geo_menu_file_select_strings_and_menu_cursor[] = {
       GEO_CLOSE_NODE(),
       GEO_ZBUFFER(1),
       GEO_OPEN_NODE(),
+#ifdef TARGET_PSX
+         // The GTE focal approximation needs 38 here to match the original cursor hit boxes.
+         GEO_CAMERA_FRUSTUM(38, 100, 25000),
+#else
          GEO_CAMERA_FRUSTUM(45, 100, 25000),
+#endif
          GEO_OPEN_NODE(),
 #ifdef TARGET_PSX
-            // Scale the view uniformly so the 20,000-unit file cards fit the PS1 depth range.
-            GEO_SCALE(0, 16384),
+            // Fit the 20,000-unit depth and the 9x backdrop in the signed GTE matrix.
+            GEO_SCALE(0, 6554),
             GEO_OPEN_NODE(),
 #endif
             GEO_CAMERA(0, 0, 0, 1000, 0, 0, 0, 0x00000000),

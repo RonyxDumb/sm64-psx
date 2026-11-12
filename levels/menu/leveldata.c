@@ -1722,34 +1722,34 @@ UNUSED static const u64 menu_unused_1 = 0;
 #ifdef VERSION_EU
 
 // 0x0700BDA0 - 0x0700CDA0
-ALIGNED8 static const Texture texture_menu_course_upper[] = {
+ALIGNED8 const Texture texture_menu_course_upper[] = {
 #include "levels/menu/main_menu_seg7_eu.0BDA0.rgba16.inc.c"
 };
 
 // 0x0700CDA0 - 0x0700DDA0
-ALIGNED8 static const Texture texture_menu_niveau_upper[] = {
+ALIGNED8 const Texture texture_menu_niveau_upper[] = {
 #include "levels/menu/main_menu_seg7_eu.0CDA0.rgba16.inc.c"
 };
 
 // 0x0700DDA0 - 0x0700EDA0
-ALIGNED8 static const Texture texture_menu_kurs_upper[] = {
+ALIGNED8 const Texture texture_menu_kurs_upper[] = {
 #include "levels/menu/main_menu_seg7_eu.0DDA0.rgba16.inc.c"
 };
 
 // 0x0700EDA0 - 0x0700FDA0
-ALIGNED8 static const Texture texture_menu_course_lower[] = {
+ALIGNED8 const Texture texture_menu_course_lower[] = {
 #include "levels/menu/main_menu_seg7_eu.0EDA0.rgba16.inc.c"
 };
 
 #else
 
 // 0x0700D1A8 - 0x0700E1A8
-ALIGNED8 static const Texture texture_menu_course_upper[] = {
+ALIGNED8 const Texture texture_menu_course_upper[] = {
 #include "levels/menu/main_menu_seg7.0D1A8.rgba16.inc.c"
 };
 
 // 0x0700E1A8 - 0x0700F1A8
-ALIGNED8 static const Texture texture_menu_course_lower[] = {
+ALIGNED8 const Texture texture_menu_course_lower[] = {
 #include "levels/menu/main_menu_seg7.0E1A8.rgba16.inc.c"
 };
 #endif

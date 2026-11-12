@@ -92,6 +92,33 @@ typedef struct {
 
 static TextureBank texture_banks[TEX_CACHE_COUNT];
 static u32 texture_bank_clock;
+static TexHeader* vram_slots[TEX_SLOTS];
+
+typedef struct {
+	u16 width, height;
+	u16 first_slot, count;
+	u8 first_page, page_count;
+} TextureSlotClass;
+
+static const TextureSlotClass slot_classes[] = {
+	{ 8, 16, FIRST_CLUT_8x16, SLOTS_8x16, FIRST_PAGE_8x16, PAGES_8x16 },
+	{ 16, 16, FIRST_CLUT_16x16, SLOTS_16x16, FIRST_PAGE_16x16, PAGES_16x16 },
+	{ 32, 32, FIRST_CLUT_32x32, SLOTS_32x32, FIRST_PAGE_32x32, PAGES_32x32 },
+	{ 64, 32, FIRST_CLUT_64x32, SLOTS_64x32, FIRST_PAGE_64x32, PAGES_64x32 },
+	{ 64, 64, FIRST_CLUT_64x64, SLOTS_64x64, FIRST_PAGE_64x64, PAGES_64x64 },
+	{ 128, 32, FIRST_CLUT_128x32, SLOTS_128x32, FIRST_PAGE_128x32, PAGES_128x32 },
+};
+
+void gfx_release_textures_in_range(const void* start, const void* end) {
+	if(start == end) return;
+	for(u32 i = 0; i < TEX_SLOTS; i++) {
+		TexHeader* texture = vram_slots[i];
+		if((uintptr_t) texture >= (uintptr_t) start && (uintptr_t) texture < (uintptr_t) end) {
+			texture->window_cmd = 0;
+			vram_slots[i] = NULL;
+		}
+	}
+}
 
 extern u8 _texture_data_segment[];
 UNUSED extern u8 _texture_data_segment_end[];
@@ -99,7 +126,7 @@ UNUSED extern u8 _texture_data_segment_end[];
 static const u8* get_packed_texture(const TexHeader* header) {
 	u32 sector = header->pixel_data_bank_sector;
 	u32 offset = header->pixel_data_bank_offset;
-	u32 bytes = TEX_CLUT_BYTES + ((u32) header->width * header->height / 2);
+	u32 bytes = TEX_CLUT_BYTES + (((u32) header->width + 3) / 4) * header->height * 2;
 	if((sector % TEX_BANK_SECTORS) || (offset & 3)
 		|| bytes > TEX_BANK_BYTES || offset > TEX_BANK_BYTES - bytes) {
 		abortf("invalid packed texture bank: sector %u offset %u size %u\n", sector, offset, bytes);
@@ -157,76 +184,36 @@ static void upload_texture(u32 vram_x, u32 vram_y, u32 clut_idx, void* tex_data,
 
 [[gnu::noinline]] void gfx_load_texture(void* tex_ptr) {
 	assert(tex_ptr);
-	TexHeader* tex_header = tex_ptr;
-	if(((u32) tex_header->window_cmd >> 24) == ((u32) GP0_CMD_TEXWINDOW >> 24)) {
+	TexHeader* tex = tex_ptr;
+	if((tex->window_cmd >> 24) == ((u32) GP0_CMD_TEXWINDOW >> 24)) {
 		return; // already loaded
 	}
-	// One CD transfer fetches a whole bank; subsequent textures in that bank
-	// are uploaded directly from RAM with no further CD commands.
-	const u8* pixel_data = get_packed_texture(tex_header);
 
-	u16 width = tex_header->width;
-	u16 height = tex_header->height;
-
-	u32 aligned_width, aligned_height;
-	u32 vram_x, vram_y, slot_idx;
-	if(width <= 8 && height <= 16) {
-		static u32 cur_slot_8x16 = 0;
-		assert(cur_slot_8x16 < SLOTS_8x16);
-		u32 slots_in_row = 64 / (8 / (16 / BPP)) * PAGES_8x16;
-		vram_x = FIRST_PAGE_8x16 % 16 * 64 + cur_slot_8x16 % slots_in_row * (8 / (16 / BPP));
-		vram_y = FIRST_PAGE_8x16 / 16 * 256 + cur_slot_8x16 / slots_in_row * 16;
-		slot_idx = FIRST_CLUT_8x16 + cur_slot_8x16++;
-		aligned_width = 8;
-		aligned_height = 16;
-	} else if(width <= 16 && height <= 16) {
-		static u32 cur_slot_16x16 = 0;
-		assert(cur_slot_16x16 < SLOTS_16x16);
-		u32 slots_in_row = 64 / (16 / (16 / BPP)) * PAGES_16x16;
-		vram_x = FIRST_PAGE_16x16 % 16 * 64 + cur_slot_16x16 % slots_in_row * (16 / (16 / BPP));
-		vram_y = FIRST_PAGE_16x16 / 16 * 256 + cur_slot_16x16 / slots_in_row * 16;
-		slot_idx = FIRST_CLUT_16x16 + cur_slot_16x16++;
-		aligned_width = 16;
-		aligned_height = 16;
-	} else if(width <= 32 && height <= 32) {
-		static u32 cur_slot_32x32 = 0;
-		assert(cur_slot_32x32 < SLOTS_32x32);
-		u32 slots_in_row = 64 / (32 / (16 / BPP)) * PAGES_32x32;
-		vram_x = FIRST_PAGE_32x32 % 16 * 64 + cur_slot_32x32 % slots_in_row * (32 / (16 / BPP));
-		vram_y = FIRST_PAGE_32x32 / 16 * 256 + cur_slot_32x32 / slots_in_row * 32;
-		slot_idx = FIRST_CLUT_32x32 + cur_slot_32x32++;
-		aligned_width = 32;
-		aligned_height = 32;
-	} else if(width <= 64 && height <= 32) {
-		static u32 cur_slot_64x32 = 0;
-		assert(cur_slot_64x32 < SLOTS_64x32);
-		u32 slots_in_row = 64 / (64 / (16 / BPP)) * PAGES_64x32;
-		vram_x = FIRST_PAGE_64x32 % 16 * 64 + cur_slot_64x32 % slots_in_row * (64 / (16 / BPP));
-		vram_y = FIRST_PAGE_64x32 / 16 * 256 + cur_slot_64x32 / slots_in_row * 32;
-		slot_idx = FIRST_CLUT_64x32 + cur_slot_64x32++;
-		aligned_width = 64;
-		aligned_height = 32;
-	} else if(width <= 64 && height <= 64) {
-		static u32 cur_slot_64x64 = 0;
-		assert(cur_slot_64x64 < SLOTS_64x64);
-		u32 slots_in_row = 64 / (64 / (16 / BPP)) * PAGES_64x64;
-		vram_x = FIRST_PAGE_64x64 % 16 * 64 + cur_slot_64x64 % slots_in_row * (64 / (16 / BPP));
-		vram_y = FIRST_PAGE_64x64 / 16 * 256 + cur_slot_64x64 / slots_in_row * 64;
-		slot_idx = FIRST_CLUT_64x64 + cur_slot_64x64++;
-		aligned_width = 64;
-		aligned_height = 64;
-	} else if(width <= 128 && height <= 32) {
-		static u32 cur_slot_128x32 = 0;
-		assert(cur_slot_128x32 < SLOTS_128x32);
-		u32 slots_in_row = 64 / (128 / (16 / BPP)) * PAGES_128x32;
-		vram_x = FIRST_PAGE_128x32 % 16 * 64 + cur_slot_128x32 % slots_in_row * (128 / (16 / BPP));
-		vram_y = FIRST_PAGE_128x32 / 16 * 256 + cur_slot_128x32 / slots_in_row * 32;
-		slot_idx = FIRST_CLUT_128x32 + cur_slot_128x32++;
-		aligned_width = 128;
-		aligned_height = 32;
-	} else {
-		abortf("unhandled texture size %ux%u\n", width, height);
+	u32 width = tex->width;
+	u32 height = tex->height;
+	for(u32 type = 0; type < sizeof(slot_classes) / sizeof(slot_classes[0]); type++) {
+		const TextureSlotClass* slot_class = &slot_classes[type];
+		if(width > slot_class->width || height > slot_class->height) continue;
+		u32 class_word_width = slot_class->width / (16 / BPP);
+		u32 slots_in_row = (64 / class_word_width) * slot_class->page_count;
+		for(u32 i = 0; i < slot_class->count; i++) {
+			u32 slot = slot_class->first_slot + i;
+			if(vram_slots[slot]) continue;
+			u32 x = (slot_class->first_page % 16) * 64 + (i % slots_in_row) * class_word_width;
+			u32 y = (slot_class->first_page / 16) * 256 + (i / slots_in_row) * slot_class->height;
+			const u8* pixels = get_packed_texture(tex);
+			upload_texture(x, y, slot, tex, (width + 3) / 4, height, pixels);
+			// The window follows the texture size, including when a small texture
+			// uses a larger slot. The GPU window works in eight-texel steps.
+			u32 window_width = 8;
+			u32 window_height = 8;
+			while(window_width < width) window_width *= 2;
+			while(window_height < height) window_height *= 2;
+			tex->window_cmd = gp0_texwindow(tex->offx / 8, tex->offy / 8,
+				~(window_width / 8 - 1), ~(window_height / 8 - 1));
+			vram_slots[slot] = tex;
+			return;
+		}
 	}
-	upload_texture(vram_x, vram_y, slot_idx, tex_header, width / (16 / BPP), aligned_height, pixel_data);
-	tex_header->window_cmd = gp0_texwindow(tex_header->offx / 8, tex_header->offy / 8, ~(aligned_width / 8 - 1), ~(aligned_height / 8 - 1));
+	abortf("no PS1 VRAM slot for texture %ux%u\n", width, height);
 }

@@ -16,10 +16,7 @@
 //#define NO_GAPS // fills in T-junction gaps with more triangles (UNFINISHED - add some condition)
 #define MAX_TESSELLATION_Z 800
 #define VANITY_TESSELLATION 2 // applies to polygons near the camera
-// Four levels can generate 256 children per original quad, overflowing the
-// fixed PS1 GPU command pool in ordinary stages. The previous three-level
-// budget bounds subdivisions while preserving near-plane recovery.
-#define SPARING_TESSELLATION 3 // applies when saving polygons from clipping
+#define CLIP_GTE_ERRORS (IMPORTANT_GTE_ERRORS | GTE_FLAG_SX2_SATURATED | GTE_FLAG_SY2_SATURATED)
 
 // check the .map file and ensure the section is smaller than 0x1000 so it actually fits in icache!!!
 #define DL_EXEC_ICACHE_FUNC [[gnu::section(".dl_exec")]] [[gnu::noinline]] [[gnu::flatten]]
@@ -102,6 +99,8 @@ DL_EXEC_ICACHE_FUNC static void append_poly(Packet* packet, bool is_quad, s32 sx
 	bool gouraud = gfx_psx_colors_vary(c0, c1, c2, c3, is_quad);
 	if(textured) {
 		gfx_packet_append(packet, tex->window_cmd);
+	} else if(flags & PRIM_FLAG_FORCE_BLEND) {
+		gfx_packet_append(packet, gp0_texpage(gp0_page(0, 0, GP0_BLEND_SEMITRANS, 0), true, false));
 	}
 	gfx_packet_append(packet, c0 | _gp0_polygon(is_quad, false, gouraud, textured, flags & PRIM_FLAG_FORCE_BLEND));
 	gte_storeDataRegM(GTE_SXY0, gfx_packet_skip(packet));
@@ -124,6 +123,160 @@ DL_EXEC_ICACHE_FUNC static void append_poly(Packet* packet, bool is_quad, s32 sx
 		if(textured) {
 			gfx_packet_append(packet, vtx[3].uv);
 		}
+	}
+}
+
+DL_EXEC_ICACHE_FUNC static void emit_poly_packet(bool quad, s32 sxy3, u32 flags, const GfxVtx* vertices, u32 depth) {
+	u32 ot_z = is_ortho ? depth : depth / (MAX_Z / Z_BUCKETS) + FOREGROUND_BUCKETS;
+	if((flags & PRIM_FLAG_DECAL) && ot_z > FOREGROUND_BUCKETS + DECAL_Z_BIAS) {
+		ot_z -= DECAL_Z_BIAS;
+	}
+	Packet packet = (is_ortho && !is_2d_background) ? gfx_packet_begin_ui() : gfx_packet_begin();
+	if((flags & PRIM_FLAG_TEXTURED) && (flags & PRIM_FLAG_DECAL)) {
+		append_poly(&packet, quad, sxy3, flags & ~PRIM_FLAG_TEXTURED, vertices);
+	}
+	append_poly(&packet, quad, sxy3, flags, vertices);
+	gfx_packet_end(packet, ot_z);
+}
+
+typedef struct {
+	s32 x, y, z;
+	Color color;
+	u8 u, v;
+} ClipVertex;
+
+enum { CLIP_NEAR, CLIP_FAR, CLIP_LEFT, CLIP_RIGHT, CLIP_TOP, CLIP_BOTTOM, CLIP_PLANE_COUNT };
+
+// A convex triangle gains at most one vertex per clipping plane.
+// Keep this workspace off the small scratchpad stack.
+static ClipVertex clip_vertices[2][3 + CLIP_PLANE_COUNT];
+
+static s64 clip_distance(const ClipVertex* vertex, u32 plane, s32 focal, s32 near_z) {
+	switch(plane) {
+		case CLIP_NEAR: return vertex->z - near_z;
+		case CLIP_FAR: return (MAX_Z - 1) - vertex->z;
+		case CLIP_LEFT: return (s64) vertex->x * focal + (s64) vertex->z * (XRES / 2);
+		case CLIP_RIGHT: return -(s64) vertex->x * focal + (s64) vertex->z * (XRES / 2);
+		case CLIP_TOP: return (s64) vertex->y * focal + (s64) vertex->z * (YRES / 2);
+		default: return -(s64) vertex->y * focal + (s64) vertex->z * (YRES / 2);
+	}
+}
+
+static s32 clip_lerp(s32 a, s32 b, s32 fraction) {
+	return a + (((s64) b - a) * fraction >> 16);
+}
+
+static u8 clip_lerp_uv(u8 a, u8 b, s32 fraction) {
+	s32 end = b;
+	if(!native_uv) {
+		if(end - a > 127) end -= 256;
+		if(end - a < -128) end += 256;
+	}
+	return (u8) clip_lerp(a, end, fraction);
+}
+
+static ClipVertex clip_intersection(const ClipVertex* outside, const ClipVertex* inside,
+                                   s64 outside_distance, s64 inside_distance) {
+	// Interpolate from the same end of a shared edge in both triangles.
+	s32 fraction = (-outside_distance * 65536) / (inside_distance - outside_distance);
+	return (ClipVertex) {
+		.x = clip_lerp(outside->x, inside->x, fraction),
+		.y = clip_lerp(outside->y, inside->y, fraction),
+		.z = clip_lerp(outside->z, inside->z, fraction),
+		.color = {
+			.r = clip_lerp(outside->color.r, inside->color.r, fraction),
+			.g = clip_lerp(outside->color.g, inside->color.g, fraction),
+			.b = clip_lerp(outside->color.b, inside->color.b, fraction),
+		},
+		.u = clip_lerp_uv(outside->u, inside->u, fraction),
+		.v = clip_lerp_uv(outside->v, inside->v, fraction),
+	};
+}
+
+static ClipVertex clip_load_vertex(const GfxVtx* position, const GfxVtx* material) {
+	gte_setV0(position->x, position->y, position->z);
+	gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_TR);
+	return (ClipVertex) {
+		.x = (s32) gte_getDataReg(GTE_MAC1),
+		.y = (s32) gte_getDataReg(GTE_MAC2),
+		.z = (s32) gte_getDataReg(GTE_MAC3),
+		.color = material->color,
+		.u = material->u,
+		.v = material->v,
+	};
+}
+
+static s32 clip_project(s32 coord, s32 z, s32 focal, s32 half_size) {
+	s32 screen = half_size + (s64) coord * focal / z;
+	if(screen < 0) return 0;
+	if(screen > half_size * 2) return half_size * 2;
+	return screen;
+}
+
+[[gnu::noinline]] static void clip_and_draw_triangle(const GfxVtx* a, const GfxVtx* b, const GfxVtx* c,
+                                                    const GfxVtx* ma, const GfxVtx* mb, const GfxVtx* mc,
+                                                    u32 flags, s32 focal) {
+	ClipVertex* input = clip_vertices[0];
+	ClipVertex* output = clip_vertices[1];
+	input[0] = clip_load_vertex(a, ma);
+	input[1] = clip_load_vertex(b, mb);
+	input[2] = clip_load_vertex(c, mc);
+	u32 count = 3;
+	s32 near_z = focal / 2 + 1;
+
+	for(u32 plane = 0; plane < CLIP_PLANE_COUNT; plane++) {
+		u32 written = 0;
+		const ClipVertex* prev = &input[count - 1];
+		s64 prev_distance = clip_distance(prev, plane, focal, near_z);
+		for(u32 i = 0; i < count; i++) {
+			const ClipVertex* current = &input[i];
+			s64 distance = clip_distance(current, plane, focal, near_z);
+			if(prev_distance < 0 && distance > 0) {
+				output[written++] = clip_intersection(prev, current, prev_distance, distance);
+			} else if(prev_distance > 0 && distance < 0) {
+				output[written++] = clip_intersection(current, prev, distance, prev_distance);
+			}
+			if(distance >= 0) output[written++] = *current;
+			prev = current;
+			prev_distance = distance;
+		}
+		if(written < 3) return;
+		count = written;
+		ClipVertex* swap = input;
+		input = output;
+		output = swap;
+	}
+
+	s32 xy[3 + CLIP_PLANE_COUNT];
+	for(u32 i = 0; i < count; i++) {
+		// Rounding the fixed-point intersection can move Z by one unit.
+		s32 z = input[i].z < near_z ? near_z : input[i].z;
+		xy[i] = gp0_xy(clip_project(input[i].x, z, focal, XRES / 2),
+		               clip_project(input[i].y, z, focal, YRES / 2));
+	}
+	for(u32 i = 1; i + 1 < count; i++) {
+		gte_setDataReg(GTE_SXY0, xy[0]);
+		gte_setDataReg(GTE_SXY1, xy[i]);
+		gte_setDataReg(GTE_SXY2, xy[i + 1]);
+		gte_commandNoNop(GTE_CMD_NCLIP);
+		s32 area = (s32) gte_getDataReg(GTE_MAC0);
+		if(area == 0 || (area > 0 && !(flags & PRIM_FLAG_TWO_SIDED))) continue;
+
+		const ClipVertex* corners[3] = {&input[0], &input[i], &input[i + 1]};
+		GfxVtx material[3];
+		u32 depth = 0;
+		u32 depth_sum = 0;
+		for(u32 corner = 0; corner < 3; corner++) {
+			const ClipVertex* vertex = corners[corner];
+			material[corner].u = vertex->u;
+			material[corner].v = vertex->v;
+			material[corner].color = vertex->color;
+			u32 z = vertex->z < MAX_Z ? vertex->z : MAX_Z - 1;
+			if(z > depth) depth = z;
+			depth_sum += z;
+		}
+		if(flags & PRIM_FLAG_TITLE_LOGO) depth = depth_sum / 3;
+		emit_poly_packet(false, 0, flags, material, depth);
 	}
 }
 
@@ -233,9 +386,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		is_2d_background = false;
 
 		// if there was any error in rtpt, cull it
-		gte_flags = gte_getControlReg(GTE_FLAG) & IMPORTANT_GTE_ERRORS;
-		// Keep going: subdivision below is also the clip-recovery path.
-		if(gte_flags && level >= SPARING_TESSELLATION) return;
+		gte_flags = gte_getControlReg(GTE_FLAG) & CLIP_GTE_ERRORS;
 
 		// prepare to reject backfaces
 		gte_commandNoNop(GTE_CMD_NCLIP);
@@ -284,8 +435,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 			gte_storeDataRegM(GTE_VXY0, (u32*) &storage[3].xy);
 
 			// if there was any error in rtps, cull it
-			gte_flags |= gte_getControlReg(GTE_FLAG) & IMPORTANT_GTE_ERRORS;
-			if(gte_flags && level >= SPARING_TESSELLATION) return;
+			gte_flags |= gte_getControlReg(GTE_FLAG) & CLIP_GTE_ERRORS;
 
 			// prepare to reject backfaces
 			gte_commandNoNop(GTE_CMD_NCLIP);
@@ -308,7 +458,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 			}
 
 			// Reject only when all four depths are safely inside the clip range.
-			// Otherwise the recursive clip-recovery path below gets first chance.
+			// The clipper handles polygons crossing the view frustum.
 			if(triangle_backfaced && quad_second_triangle_backfaced && !gte_flags
 				&& !(flags & PRIM_FLAG_TWO_SIDED)) {
 				s32 near_z_for_quad_cull = (s16) gte_getControlReg(GTE_H) / 2;
@@ -321,7 +471,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 	if(!is_ortho) {
 		s32 near_z = (s16) gte_getControlReg(GTE_H) / 2;
 		// Reject only when the entire primitive is outside. If it crosses the
-		// near/far plane, subdivide it so the inside children can survive.
+		// near/far plane, clip it against the view frustum.
 		if(z <= near_z || min_z >= MAX_Z) return;
 		depth_straddles_clip = min_z <= near_z || z >= MAX_Z;
 	}
@@ -329,7 +479,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 	/* Screen-space clipping is conservative: reject only primitives whose
 	 * entire projected hull lies beyond one viewport edge. Never use it
 	 * when the GTE reports saturation or a near/far-plane crossing;
-	 * those must continue through the existing subdivision path. */
+	 * those must continue through the clipper. */
 	if(!is_ortho && !gte_flags && !depth_straddles_clip
 		&& gfx_psx_outside_viewport(
 			gte_getDataReg(GTE_SXY0), gte_getDataReg(GTE_SXY1),
@@ -369,15 +519,21 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		}
 	}
 
-	bool needs_clip_tessellation = !is_ortho
-		&& (gte_flags || depth_straddles_clip)
-		&& level < SPARING_TESSELLATION;
+	if(!is_ortho && (gte_flags || depth_straddles_clip)) {
+		s32 focal = gte_getControlReg(GTE_H) & 0xFFFF;
+		clip_and_draw_triangle(v0, v1, v2, &storage[0], &storage[1], &storage[2], flags, focal);
+		if(v3) {
+			clip_and_draw_triangle(v1, v3, v2, &storage[1], &storage[3], &storage[2], flags, focal);
+		}
+		return;
+	}
+
 	bool needs_vanity_tessellation = !is_ortho
 		&& (flags & PRIM_FLAG_TESSELLATE)
 		&& min_z <= (MAX_TESSELLATION_Z >> level)
 		&& level < VANITY_TESSELLATION;
 
-	if(needs_clip_tessellation || needs_vanity_tessellation) {
+	if(needs_vanity_tessellation) {
 		flags &= ~PRIM_FLAG_LIGHTED;
 		GfxVtx* const v0 = &storage[0];
 		GfxVtx* const v1 = &storage[1];
@@ -440,9 +596,6 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 			#endif
 		}
 		return;
-	} else if(gte_flags || depth_straddles_clip) {
-		// Subdivision budget exhausted and this residual child is still unsafe.
-		return;
 	}
 
 	/* The PS1 has no depth buffer. For the interlocking title letters
@@ -454,21 +607,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 	if(!is_ortho && (flags & PRIM_FLAG_TITLE_LOGO)) {
 		sort_z = depth_sum / (v3 ? 4 : 3);
 	}
-	u32 ot_z = is_ortho ? z : sort_z / (MAX_Z / Z_BUCKETS) + FOREGROUND_BUCKETS;
-	/* The cap emblem and other decals sit on surfaces with almost
-	 * identical depth. Draw them slightly nearer to avoid hiding the M. */
-	if((flags & PRIM_FLAG_DECAL) && ot_z > FOREGROUND_BUCKETS + DECAL_Z_BIAS) {
-		ot_z -= DECAL_Z_BIAS;
-	}
-
-	/* UI and dialog must survive heavy scenery; reserve the final portion
-	 * of the packet pool for orthographic overlays after the 3D scene. */
-	Packet packet = (is_ortho && !is_2d_background) ? gfx_packet_begin_ui() : gfx_packet_begin();
-	if((flags & PRIM_FLAG_TEXTURED) && (flags & PRIM_FLAG_DECAL)) {
-		append_poly(&packet, v3, sxy3, flags & ~PRIM_FLAG_TEXTURED, storage);
-	}
-	append_poly(&packet, v3, sxy3, flags, storage);
-	gfx_packet_end(packet, ot_z);
+	emit_poly_packet(v3 != NULL, sxy3, flags, storage, sort_z);
 }
 
 DL_EXEC_ICACHE_FUNC static void set_light(u32 normals, u32 rgb, u32 light_idx) {
@@ -665,7 +804,7 @@ DL_EXEC_ICACHE_FUNC static void handle_sprite(u32 cmd) {
 }
 
 static dl_t* call_stack[16];
-scratchpad static GfxVtx storage[V_COUNT * SPARING_TESSELLATION + 4];
+scratchpad static GfxVtx storage[V_COUNT * VANITY_TESSELLATION + 4];
 
 DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 	u32 call_stack_idx = 0;
@@ -733,7 +872,8 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 			case DL_CMD_ENV_COLOR_ALPHA_HALF:
 			case DL_CMD_ENV_COLOR_ALPHA_RESERVED:
 			case DL_CMD_ENV_COLOR_ALPHA_FULL: {
-				env_color.as_u32 = cmd /*& 0xFFFFFF)*/ | (s32) (op - DL_CMD_ENV_COLOR_ALPHA_0) << 30 >> 6;
+				static const u8 alpha[] = {0, 128, 192, 255};
+				env_color.as_u32 = cmd | (u32) alpha[op - DL_CMD_ENV_COLOR_ALPHA_0] << 24;
 				break;
 			}
 			case DL_CMD_LIGHT_AMBIENT: {

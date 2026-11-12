@@ -112,6 +112,7 @@ jobs:
             --workdir /project \
             sm64-psx-ci:latest \
             sh -ec "chmod +x tools/build/* && \
+              make VERSION=us LIGHTS_15BIT=${{ matrix.rgb555 }} COLOR=0 build/us_psx/tex_pack && \
               make VERSION=us LIGHTS_15BIT=${{ matrix.rgb555 }} COLOR=0 MAKE_EXT_FILES=1 build/us_psx/ext_files.dat && \
               make VERSION=us LIGHTS_15BIT=${{ matrix.rgb555 }} COLOR=0"
 

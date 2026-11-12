@@ -66,6 +66,9 @@ ShortVec gfx_modelview_apply(const ShortVec* v);
 
 // textures
 void gfx_load_texture(void* tex_ptr);
+#ifdef TARGET_PSX
+void gfx_release_textures_in_range(const void* start, const void* end);
+#endif
 
 // rsp compiler
 void gfx_reset_rsp_jit();

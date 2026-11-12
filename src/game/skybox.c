@@ -128,6 +128,8 @@ static bool psx_skybox_ensure_loaded(s8 background) {
      */
     bool prevCanShowScreenMessage = can_show_screen_message;
     can_show_screen_message = false;
+    gfx_release_textures_in_range(sPsxSkyboxRecord.headers,
+                                 sPsxSkyboxRecord.headers + PSX_SKYBOX_MAX_UNIQUE);
     dma_read((u8 *) &sPsxSkyboxRecord, srcStart, srcEnd);
     can_show_screen_message = prevCanShowScreenMessage;
 
@@ -403,21 +405,11 @@ Gfx *init_skybox_display_list(s8 player, s8 background, s8 colorIndex) {
     if (!psx_skybox_ensure_loaded(background)) {
         return NULL;
     }
-    u32 color =
-        (u32) sSkyboxColors[colorIndex][0]
-        | ((u32) sSkyboxColors[colorIndex][1] << 8)
-        | ((u32) sSkyboxColors[colorIndex][2] << 16);
-
-    if ((u8) background >= 10) {
-        return NULL;
-    }
-
-    /*
-     * The PS1 graph renderer already processes the background under the
-     * orthographic branch. Emit native background quads directly.
-     */
-    gfx_emit_set_background(true);
-    gfx_emit_env_color_alpha_full(color);
+    // 128 is neutral modulation for textured PS1 polygons.
+    const u8 *color = sSkyboxColors[colorIndex];
+    u32 rgb = ((u32) (color[0] + 1) / 2)
+            | ((u32) (color[1] + 1) / 2 << 8)
+            | ((u32) (color[2] + 1) / 2 << 16);
 
     for (row = 0; row < 3; row++) {
         for (col = 0; col < 3; col++) {
@@ -429,30 +421,17 @@ Gfx *init_skybox_display_list(s8 player, s8 background, s8 colorIndex) {
                       - (tileIndex / SKYBOX_COLS) * SKYBOX_TILE_HEIGHT;
             s16 x0 = tileX - sSkyBoxInfo[player].scaledX;
             s16 y0 = sSkyBoxInfo[player].scaledY - tileY;
-            s16 x1 = x0 + SKYBOX_TILE_WIDTH;
-            s16 y1 = y0 + SKYBOX_TILE_HEIGHT;
-
-            /*
-             * Native main-executable TexHeader pointer. Do not call
-             * segmented_to_virtual() on this address.
-             */
-            TexHeader *texture = psx_skybox_get_texture(tileIndex);
-            if (texture == NULL) {
+            if (x0 >= XRES || x0 + SKYBOX_TILE_WIDTH <= 0 ||
+                y0 >= YRES || y0 + SKYBOX_TILE_HEIGHT <= 0) {
                 continue;
             }
-
-            gfx_emit_tex(texture);
-            gfx_emit_screen_quad(x0, y0, x1, y1);
+            TexHeader *texture = psx_skybox_get_texture(tileIndex);
+            if (texture != NULL) {
+                gfx_draw_background_tile(texture, x0, y0, SKYBOX_TILE_WIDTH, SKYBOX_TILE_HEIGHT, rgb);
+            }
         }
     }
 
-    /*
-     * Do not leak the last skybox texture into subsequent native screen-quad
-     * emission or compiled display-list state.
-     */
-    gfx_emit_tex(NULL);
-    gfx_emit_set_background(false);
-    gfx_emit_env_color_alpha_full(0xFFFFFF);
     return NULL;
 #else
     UNUSED(player);
@@ -476,22 +455,20 @@ Gfx *init_skybox_display_list(s8 player, s8 background, s8 colorIndex) {
 Gfx *create_skybox_facing_cameraq(s8 player, s8 background, UNUSED q32 fovq,
                                     q32 posXq, q32 posYq, q32 posZq,
                                     q32 focXq, q32 focYq, q32 focZq) {
-    volatile q32 cameraFaceXq = focXq - posXq;
+    q32 cameraFaceXq = focXq - posXq;
     q32 cameraFaceYq = focYq - posYq;
     q32 cameraFaceZq = focZq - posZq;
     s8 colorIndex = 1;
-    return NULL; // disattiva la creazione delle skybox (rompono il rendering dei poligoni)
 
     // If the first star is collected in JRB, make the sky darker and slightly green
     if (background == 8 && !(save_file_get_star_flags(gCurrSaveFileNum - 1, COURSE_JRB - 1) & 1)) {
         colorIndex = 0;
     }
 
-    //! fov is always set to 90.0f. If this line is removed, then the game crashes because fov is 0 on
-    //! the first frame, which causes a floating point divide by 0
-    fovq = q(90);
     sSkyBoxInfo[player].yaw = atan2sq(cameraFaceZq, cameraFaceXq);
-    sSkyBoxInfo[player].pitch = atan2sq(sqrtq64((q64) qmul(cameraFaceXq, cameraFaceXq) + (q64) qmul(cameraFaceZq, cameraFaceZq)), cameraFaceYq);
+    u64 horizontalSquared = (u64) ((q64) cameraFaceXq * cameraFaceXq)
+                          + (u64) ((q64) cameraFaceZq * cameraFaceZq);
+    sSkyBoxInfo[player].pitch = atan2sq((q32) sqrtu64(horizontalSquared), cameraFaceYq);
     sSkyBoxInfo[player].scaledX = calculate_skybox_scaled_xq(player);
     sSkyBoxInfo[player].scaledY = calculate_skybox_scaled_yq(player);
     sSkyBoxInfo[player].upperLeftTile = get_top_left_tile_idx(player);

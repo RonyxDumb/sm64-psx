@@ -82,9 +82,10 @@ void sendVRAMData(const void *data, int x, int y, int width, int height) {
 		numChunks = 1;
 	} else {
 		chunkSize = DMA_MAX_CHUNK_SIZE;
-		numChunks = length / DMA_MAX_CHUNK_SIZE;
-
-		assert(!(length % DMA_MAX_CHUNK_SIZE));
+		while (length % chunkSize) {
+			chunkSize /= 2;
+		}
+		numChunks = length / chunkSize;
 	}
 
 	waitForGP0Ready();

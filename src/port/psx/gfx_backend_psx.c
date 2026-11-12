@@ -59,3 +59,19 @@ void gfx_draw_background_color(u16 color) {
 	gfx_packet_append(&packet, gp0_xy(XRES, YRES));
 	gfx_packet_end(packet, BACKGROUND_Z + 1);
 }
+
+void gfx_draw_background_tile(TexHeader* tex, s16 x, s16 y, s16 width, s16 height, u32 rgb) {
+	gfx_load_texture(tex);
+	Packet packet = gfx_packet_begin();
+	gfx_packet_append(&packet, tex->window_cmd);
+	gfx_packet_append(&packet, rgb | gp0_shadedQuad(false, true, false));
+	gfx_packet_append(&packet, gp0_xy(x, y));
+	gfx_packet_append(&packet, gp0_uv(0, 0, tex->clut_attr));
+	gfx_packet_append(&packet, gp0_xy(x + width, y));
+	gfx_packet_append(&packet, gp0_uv(tex->width, 0, tex->page_attr));
+	gfx_packet_append(&packet, gp0_xy(x, y + height));
+	gfx_packet_append(&packet, gp0_uv(0, tex->height, 0));
+	gfx_packet_append(&packet, gp0_xy(x + width, y + height));
+	gfx_packet_append(&packet, gp0_uv(tex->width, tex->height, 0));
+	gfx_packet_end(packet, BACKGROUND_Z);
+}

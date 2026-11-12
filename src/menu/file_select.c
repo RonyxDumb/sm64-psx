@@ -1392,7 +1392,7 @@ void check_main_menu_clicked_buttons(void) {
 #endif
         // Sound mode menu is handled separately because the button ID for it
         // is not grouped with the IDs of the other submenus.
-        if (0 && check_clicked_button(qtrunc(QFIELD(sMainMenuButtons[MENU_BUTTON_SOUND_MODE], oPosX)),
+        if (check_clicked_button(qtrunc(QFIELD(sMainMenuButtons[MENU_BUTTON_SOUND_MODE], oPosX)),
                                 qtrunc(QFIELD(sMainMenuButtons[MENU_BUTTON_SOUND_MODE], oPosY)), 200) == TRUE) {
             sMainMenuButtons[MENU_BUTTON_SOUND_MODE]->oMenuButtonState = MENU_BUTTON_STATE_GROWING;
             sSelectedButtonID = MENU_BUTTON_SOUND_MODE;
@@ -1693,15 +1693,9 @@ void handle_controller_cursor_input(void) {
  */
 void print_menu_cursor(void) {
     handle_controller_cursor_input();
-    // Get the right graphic to use for the cursor.
-    if (sCursorClickingTimer == 0)
-        // Idle
-        gfx_emit_tex(segmented_to_virtual(texture_menu_idle_hand));
-		gfx_emit_sprite(sCursorPos[0] + 160 - 5, YRES - (sCursorPos[1] + 120 - 25 + 32));
-    if (sCursorClickingTimer != 0)
-        // Grabbing
-        gfx_emit_tex(segmented_to_virtual(texture_menu_grabbing_hand));
-		gfx_emit_sprite(sCursorPos[0] + 160 - 5, YRES - (sCursorPos[1] + 120 - 25 + 32));
+    const Texture *cursor = sCursorClickingTimer == 0 ? texture_menu_idle_hand : texture_menu_grabbing_hand;
+    gfx_emit_tex(segmented_to_virtual(cursor));
+    gfx_emit_sprite(sCursorPos[0] + 155, YRES - (sCursorPos[1] + 127));
     if (sCursorClickingTimer != 0) {
         sCursorClickingTimer++; // This is a very strange way to implement a timer? It counts up and
                                 // then resets to 0 instead of just counting down to 0.
