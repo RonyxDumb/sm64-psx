@@ -48,6 +48,7 @@ RAW_MODEL_C_FILES    := $(wildcard actors/*/model.inc.c) $(foreach dir,$(LEVEL_D
 CONV_MODEL_C_FILES   := $(RAW_MODEL_C_FILES:%.c=$(BUILD_DIR)/%.processed.c)
 AREA_MODEL_C_FILES   := $(foreach model,$(RAW_MODEL_C_FILES),$(if $(findstring /areas/,$(model)),$(model)))
 NATIVE_AREA_C_FILES  := $(AREA_MODEL_C_FILES:%.c=$(BUILD_DIR)/%.processed.c)
+AREA_LIGHT_C_FILES   := $(wildcard levels/*/areas/*/light.inc.c)
 MESH_TEXTURE_CATALOG := $(BUILD_DIR)/mesh_textures.json
 MESH_TEXTURE_SOURCES := $(wildcard bin/*.c levels/*/texture.inc.c)
 GENERATED_C_FILES    := $(BUILD_DIR)/sfx_defs.generated.c
@@ -586,9 +587,9 @@ $(filter-out $(NATIVE_AREA_C_FILES),$(CONV_MODEL_C_FILES)): $(BUILD_DIR)/%.proce
 $(MESH_TEXTURE_CATALOG): $(BUILD_DIR)/tex_pack $(TOOLS_DIR)/psx_static_mesh.py $(MESH_TEXTURE_SOURCES)
 >	$(V)$(PYTHON) $(TOOLS_DIR)/psx_static_mesh.py --build-dir $(BUILD_DIR) $@ $(MESH_TEXTURE_SOURCES)
 
-$(NATIVE_AREA_C_FILES): $(BUILD_DIR)/%.processed.c: %.c $(TOOLS_DIR)/psx_static_mesh.py $(MESH_TEXTURE_CATALOG) include/PR/gbi.h
+$(NATIVE_AREA_C_FILES): $(BUILD_DIR)/%.processed.c: %.c $(TOOLS_DIR)/psx_static_mesh.py $(MESH_TEXTURE_CATALOG) $(AREA_LIGHT_C_FILES) include/PR/gbi.h src/port/gfx/gfx.h $(CFLAGS_FILE)
 >	$(V)mkdir -p $(dir $@)
->	$(V)$(PYTHON) $(TOOLS_DIR)/psx_static_mesh.py --build-dir $(BUILD_DIR) --catalog $(MESH_TEXTURE_CATALOG) $< $@
+>	$(V)$(PYTHON) $(TOOLS_DIR)/psx_static_mesh.py --build-dir $(BUILD_DIR) --catalog $(MESH_TEXTURE_CATALOG) $(C_DEFINES) $< $@
 
 $(EXT_SOURCE_C_FILES:%.c=$(BUILD_DIR)/%.processed.c): $(BUILD_DIR)/%.processed.c: %.c $(CONV_MODEL_C_FILES) $(TOOLS_DIR)/preprocess_graphics.py
 >	$(call print,Preprocessing graphics:,$<,$@)

@@ -808,6 +808,7 @@ scratchpad static GfxVtx storage[V_COUNT * VANITY_TESSELLATION + 4];
 
 DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 	u32 call_stack_idx = 0;
+	u8 native_flags = 0;
 	while(true) {
 		u32 cmd = *(dl++);
 		u8 op = DL_UNPACK_OP(cmd);
@@ -854,6 +855,12 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 			case DL_CMD_SEG_VTX: {
 				vertices = segmented_to_virtual((void*) *dl++);
 				native_uv = true;
+				native_flags = cmd;
+				break;
+			}
+			case DL_CMD_STATIC_TRI: {
+				draw_poly(&vertices[cmd >> 16], &vertices[cmd >> 8 & 0xFF],
+				          &vertices[cmd & 0xFF], NULL, native_flags, storage, 0);
 				break;
 			}
 			case DL_CMD_TRI: case DL_CMD_QUAD: {

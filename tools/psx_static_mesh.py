@@ -19,7 +19,7 @@ IGNORED = {
     "gsDPSetTexturePersp", "gsDPSetTextureLOD", "gsDPSetPrimColor", "gsSPNoOp",
 }
 WORLD_EDGE_LIMITS = (1024, 2048, 4096, 8192, 32768)
-VERTICES_PER_BATCH = 16
+VERTICES_PER_BATCH = 256
 
 
 class UnsupportedMesh(ValueError):
@@ -61,6 +61,36 @@ def make_texture_catalog(build_dir, sources):
     for path in sources:
         textures.update(read_textures(path.read_text(), build_dir))
     return textures
+
+
+def select_geometry_variant(source, defines):
+    lines = []
+    parents = []
+    active = True
+    for line in source.splitlines(keepends=True):
+        directive = re.match(r"^\s*#\s*(if\w*|elif|else|endif)\b\s*(\w*)", line)
+        if not directive:
+            if active:
+                lines.append(line)
+            continue
+        kind, name = directive.groups()
+        if kind in {"ifdef", "ifndef"} and name:
+            parents.append(active)
+            active = active and ((name in defines) == (kind == "ifdef"))
+        elif kind == "else" and parents:
+            active = parents[-1] and not active
+        elif kind == "endif" and parents:
+            active = parents.pop()
+        else:
+            raise UnsupportedMesh(f"unsupported geometry condition {line.strip()}")
+    if parents:
+        raise UnsupportedMesh("unclosed geometry condition")
+    return "".join(lines)
+
+
+def read_lights(source):
+    return {name: [int(value, 0) for value in NUMBER.findall(values)]
+            for name, values in LIGHT.findall(source)}
 
 
 def read_combiners():
@@ -193,14 +223,17 @@ def compile_list(root, lists, batches, lights, textures, combiners):
                     raise UnsupportedMesh("triangle without vertices")
                 for i in range(0, len(args), 4):
                     yield state.triangle([selected[int(v, 0)] for v in args[i:i + 3]], textures)
-            elif command in {"gsSPSetGeometryMode", "gsSPClearGeometryMode"}:
-                modes = {mode.strip() for mode in args[0].split("|")}
-                if "G_TEXTURE_GEN" in modes:
+            elif command in {"gsSPSetGeometryMode", "gsSPClearGeometryMode", "gsSPGeometryMode"}:
+                clear = args[0] if command != "gsSPSetGeometryMode" else "0"
+                set_modes = args[-1] if command != "gsSPClearGeometryMode" else "0"
+                enabled = {mode.strip() for mode in set_modes.split("|")}
+                if "G_TEXTURE_GEN" in enabled:
                     raise UnsupportedMesh("camera-dependent texture generation")
-                if command == "gsSPSetGeometryMode":
-                    state.geometry.update(modes)
+                if clear in {"-1", "0xFFFFFFFF"}:
+                    state.geometry.clear()
                 else:
-                    state.geometry.difference_update(modes)
+                    state.geometry.difference_update(mode.strip() for mode in clear.split("|"))
+                state.geometry.update(enabled)
             elif command == "gsSPTexture":
                 state.scale = tuple(int(v, 0) for v in args[:2])
             elif command in {"gsDPSetTile", "gsDPLoadTextureBlock"}:
@@ -272,7 +305,7 @@ def split_triangle(triangle, split_edges, world_edge):
             continue
         edge = tuple(sorted((a.xyz, b.xyz)))
         world = sum((x - y) ** 2 for x, y in zip(a.xyz, b.xyz))
-        uv = max((abs(x - y) / (256 - period)
+        uv = max(((max(x, y) - min(x, y) // period * period) / 255
                   for x, y, period in zip(a.uv, b.uv, triangle.repeat) if period), default=0)
         severity = max(world / (world_edge ** 2), uv, 2 if edge in split_edges else 0)
         if severity > largest:
@@ -327,6 +360,7 @@ def emit_list(name, declaration, events):
     primitives = []
     batch_index = 0
     repeat = None
+    flags = None
     size = 0
 
     def flush():
@@ -344,7 +378,7 @@ def emit_list(name, declaration, events):
             r, g, b = (c & 255 for c in point.rgb)
             source.append(f"    {{.x={x}, .y={y}, .z={z}, .u={u}, .v={v}, .color={{.r={r}, .g={g}, .b={b}}}}},\n")
         source.append("};\n")
-        stream.extend((op("SEG_VTX"), pointer(symbol)))
+        stream.extend((op("SEG_VTX", flags), pointer(symbol)))
         stream.extend(primitives)
         batch.clear()
         primitives.clear()
@@ -356,13 +390,15 @@ def emit_list(name, declaration, events):
             continue
         points = item.vertices
         combined = batch.keys() | set(points)
-        if repeat != item.repeat or len(combined) > VERTICES_PER_BATCH or uv_offsets(combined, repeat) is None:
+        if (repeat != item.repeat or flags != item.flags or len(combined) > VERTICES_PER_BATCH
+                or uv_offsets(combined, repeat) is None):
             flush()
             repeat = item.repeat
+            flags = item.flags
         if uv_offsets(points, repeat) is None:
             raise UnsupportedMesh("UV span exceeds PS1 interpolation range")
         i, j, k = (batch.setdefault(point, len(batch)) for point in points)
-        primitives.append(op("TRI", f"({i} << 20) | ({j} << 16) | ({k} << 12) | {item.flags}"))
+        primitives.append(op("STATIC_TRI", f"({i} << 16) | ({j} << 8) | {k}"))
     flush()
     stream.append(op("END"))
     if len(stream) % 2:
@@ -374,9 +410,8 @@ def emit_list(name, declaration, events):
     return "".join(source), size + len(stream) * 4
 
 
-def compile_mesh(source, textures, combiners):
-    if re.search(r"^\s*#\s*(?:if|elif|else|endif)", source, re.M):
-        raise UnsupportedMesh("conditional geometry")
+def compile_mesh(source, textures, combiners, defines=(), shared_lights=None):
+    source = select_geometry_variant(source, defines)
     arrays = list(ARRAY.finditer(source))
     lists = {a["name"]: list(commands(a["body"])) for a in arrays if a["kind"] == "Gfx"}
     batches = {a["name"]: vertices(a["body"]) for a in arrays if a["kind"] == "Vtx"}
@@ -391,8 +426,7 @@ def compile_mesh(source, textures, combiners):
     roots = [a for a in arrays if a["kind"] == "Gfx" and (not a["static"] or a["name"] in referenced)]
     if not roots:
         raise UnsupportedMesh("no display-list roots")
-    lights = {name: [int(value, 0) for value in NUMBER.findall(values)]
-              for name, values in LIGHT.findall(source)}
+    lights = (shared_lights or {}) | read_lights(source)
     programs = {a["name"]: compile_list(a["name"], lists, batches, lights, textures, combiners)
                 for a in roots}
     # Keep each generated mesh within the original overlay allocation.
@@ -417,6 +451,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog", type=Path)
     parser.add_argument("--build-dir", type=Path, required=True)
+    parser.add_argument("-D", action="append", default=[])
     parser.add_argument("paths", type=Path, nargs="+")
     args = parser.parse_args()
     if args.catalog is None:
@@ -428,9 +463,17 @@ def main():
     source = model.read_text()
     textures = json.loads(args.catalog.read_text())
     textures.update(read_textures(source, args.build_dir))
+    shared_lights = {}
+    for parent in model.parents:
+        if parent.parent.name == "areas":
+            path = parent / "light.inc.c"
+            if path.is_file():
+                shared_lights = read_lights(path.read_text())
+            break
     try:
-        compiled = compile_mesh(source, textures, read_combiners())
-    except (UnsupportedMesh, IndexError) as exc:
+        compiled = compile_mesh(source, textures, read_combiners(),
+                                {definition.split("=")[0] for definition in args.D}, shared_lights)
+    except (ValueError, IndexError) as exc:
         print(f"PS1 static mesh fallback for {model}: {exc}")
         compiled = source
     out.write_text(compiled)

@@ -15,6 +15,13 @@
 
 #include "levels/menu/header.h"
 
+#ifdef TARGET_PSX
+// Match the original cursor hit boxes and star positions with the GTE focal approximation.
+#define MENU_CAMERA_FOV 38
+#else
+#define MENU_CAMERA_FOV 45
+#endif
+
 // 0x0E0001D0
 const GeoLayout geo_menu_mario_save_button[] = {
    GEO_NODE_START(),
@@ -152,12 +159,7 @@ const GeoLayout geo_menu_file_select_strings_and_menu_cursor[] = {
       GEO_CLOSE_NODE(),
       GEO_ZBUFFER(1),
       GEO_OPEN_NODE(),
-#ifdef TARGET_PSX
-         // The GTE focal approximation needs 38 here to match the original cursor hit boxes.
-         GEO_CAMERA_FRUSTUM(38, 100, 25000),
-#else
-         GEO_CAMERA_FRUSTUM(45, 100, 25000),
-#endif
+         GEO_CAMERA_FRUSTUM(MENU_CAMERA_FOV, 100, 25000),
          GEO_OPEN_NODE(),
 #ifdef TARGET_PSX
             // Fit the 20,000-unit depth and the 9x backdrop in the signed GTE matrix.
@@ -194,7 +196,7 @@ const GeoLayout geo_menu_act_selector_strings[] = {
       GEO_CLOSE_NODE(),
       GEO_ZBUFFER(1),
       GEO_OPEN_NODE(),
-         GEO_CAMERA_FRUSTUM(45, 100, 25000),
+         GEO_CAMERA_FRUSTUM(MENU_CAMERA_FOV, 100, 25000),
          GEO_OPEN_NODE(),
             GEO_CAMERA(0, 0, 0, 1000, 0, 0, 0, 0x00000000),
             GEO_OPEN_NODE(),

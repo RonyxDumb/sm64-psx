@@ -7,7 +7,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from psx_static_mesh import Triangle, Vertex, compile_mesh, read_combiners, tessellate, uv_offsets
+from psx_static_mesh import Triangle, Vertex, compile_mesh, emit_list, read_combiners, select_geometry_variant, tessellate, uv_offsets
 
 
 class RendererRegressionTests(unittest.TestCase):
@@ -101,6 +101,18 @@ class RendererRegressionTests(unittest.TestCase):
 
 
 class StaticMeshTests(unittest.TestCase):
+    def test_region_selection_keeps_only_the_requested_variant(self):
+        source = "#ifdef VERSION_JP\nJapan\n#else\nInternational\n#endif\n"
+        self.assertEqual(select_geometry_variant(source, {"VERSION_JP"}), "Japan\n")
+        self.assertEqual(select_geometry_variant(source, {"VERSION_US"}), "International\n")
+
+    def test_native_batch_keeps_vertex_indices_above_fifteen(self):
+        points = [Vertex((i, 0, 0), (0, 0), (255, 255, 255)) for i in range(18)]
+        triangles = [Triangle(tuple(points[i:i + 3]), (0, 0), "0") for i in range(0, 18, 3)]
+        output, _ = emit_list("root", "const Gfx root[] = {", triangles)
+        self.assertEqual(output.count("DL_CMD_SEG_VTX"), 1)
+        self.assertIn("(15 << 16) | (16 << 8) | 17", output)
+
     def test_wrapped_uvs_share_an_interval_without_changing_tile_phase(self):
         points = (
             Vertex((0, 0, 0), (-20, 10), (0, 0, 0)),
@@ -143,7 +155,7 @@ const Gfx root[] = {
         output = compile_mesh(source, {"texture": (32, 32, 0)}, read_combiners())
         self.assertIn("DL_CMD_STATIC_MESH) | (1)", output)
         self.assertIn("DL_CMD_SEG_TEX", output)
-        self.assertIn("DL_CMD_TRI", output)
+        self.assertIn("DL_CMD_STATIC_TRI", output)
         self.assertNotIn("gsSPVertex(", output)
 
 
