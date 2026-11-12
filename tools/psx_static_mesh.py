@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import re
 import struct
+from typing import NamedTuple
 
 ARRAY = re.compile(r"^(?P<static>static )?const (?P<kind>Vtx|Gfx) (?P<name>\w+)\[\] = \{\n(?P<body>.*?)^\};", re.M | re.S)
 COMMAND = re.compile(r"(gs\w+)\((.*)\),")
@@ -26,6 +27,13 @@ VERTICES_PER_BATCH = 256
 
 class UnsupportedMesh(ValueError):
     pass
+
+
+class Texture(NamedTuple):
+    width: int
+    height: int
+    rotated: bool
+    bank_sector: int
 
 
 @dataclass(frozen=True)
@@ -53,8 +61,7 @@ def read_textures(source, build_dir):
     for name, path in TEXTURE.findall(source):
         header = build_dir / (path + ".texheader")
         if header.is_file():
-            width, height, rotated = struct.unpack("<HHB", header.read_bytes()[:5])
-            textures[name] = (width, height, rotated)
+            textures[name] = Texture(*struct.unpack_from("<HH?11xH", header.read_bytes()))
     return textures
 
 
@@ -168,9 +175,9 @@ class Material:
 
         repeat = (0, 0)
         if textured:
-            width, height, rotated = textures[self.texture]
-            periods = (width, height)
-            clamp = self.clamp[::-1] if rotated else self.clamp
+            texture = textures[self.texture]
+            periods = (texture.width, texture.height)
+            clamp = self.clamp[::-1] if texture.rotated else self.clamp
             repeat = tuple(0 if clip else period for period, clip in zip(periods, clamp))
             if any(period and (period & (period - 1) or period > 128) for period in repeat):
                 raise UnsupportedMesh(f"texture size for {self.texture}")
@@ -180,7 +187,7 @@ class Material:
             rgb = tuple((c + 128) % 256 - 128 for c in row.rgb) if lit else row.rgb
             uv = (0, 0)
             if textured:
-                coords = row.uv[::-1] if rotated else row.uv
+                coords = row.uv[::-1] if texture.rotated else row.uv
                 scaled = tuple((coord * (scale >> 8)) >> 13 for coord, scale in zip(coords, self.scale))
                 uv = tuple(max(0, min(size, coord)) if clip else coord
                            for size, coord, clip in zip(periods, scaled, clamp))
@@ -294,7 +301,10 @@ def compile_list(root, lists, batches, lights, textures, combiners):
         stack.remove(name)
 
     events = list(walk(root))
-    return [(op("STATIC_MESH", str(len(texture_symbols))), *(pointer(t) for t in texture_symbols)), *events]
+    # The loader has two CD bank buffers. Upload each bank's textures together
+    # before executing the original material and triangle order.
+    preload = sorted(texture_symbols, key=lambda symbol: textures[symbol].bank_sector)
+    return [(op("STATIC_MESH", str(len(preload))), *(pointer(t) for t in preload)), *events]
 
 
 def face_area_sq(a, b, c):
@@ -386,7 +396,7 @@ def emit_list(name, declaration, events):
     source = []
     stream = []
     batch = {}
-    primitives = []
+    batch_commands = []
     batch_index = 0
     repeat = None
     flags = None
@@ -408,14 +418,15 @@ def emit_list(name, declaration, events):
             source.append(f"    {{.x={x}, .y={y}, .z={z}, .u={u}, .v={v}, .color={{.r={r}, .g={g}, .b={b}}}}},\n")
         source.append("};\n")
         stream.extend((op("SEG_VTX", flags), pointer(symbol)))
-        stream.extend(primitives)
+        stream.extend(batch_commands)
         batch.clear()
-        primitives.clear()
+        batch_commands.clear()
 
     for item in events:
         if not isinstance(item, Triangle):
-            flush()
-            stream.extend(item)
+            # Texture and light commands do not invalidate the vertex table.
+            # Keep their original order inside a compatible batch.
+            (batch_commands if batch else stream).extend(item)
             continue
         points = item.vertices
         combined = batch.keys() | set(points)
@@ -427,7 +438,7 @@ def emit_list(name, declaration, events):
         if uv_offsets(points, repeat) is None:
             raise UnsupportedMesh("UV span exceeds PS1 interpolation range")
         i, j, k = (batch.setdefault(point, len(batch)) for point in points)
-        primitives.append(op("STATIC_TRI", f"({i} << 16) | ({j} << 8) | {k}"))
+        batch_commands.append(op("STATIC_TRI", f"({i} << 16) | ({j} << 8) | {k}"))
     flush()
     stream.append(op("END"))
     if len(stream) % 2:
@@ -494,7 +505,7 @@ def main():
 
     model, out = args.paths
     source = model.read_text()
-    textures = json.loads(args.catalog.read_text())
+    textures = {name: Texture(*record) for name, record in json.loads(args.catalog.read_text()).items()}
     textures.update(read_textures(source, args.build_dir))
     shared_lights = {}
     for parent in model.parents:

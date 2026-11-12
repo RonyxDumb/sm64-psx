@@ -16,7 +16,8 @@ An original copy of the game is required to extract the assets.
 - Low-precision soft float implementation specially written for PSX to reduce the performance impact of floats
 - Large amounts of code have been adapted to use fixed point math, including the 16-bit integer vectors and matrices that are standard on PSX
 - Simplified rewritten render graph walker
-- Static level meshes are compiled into PS1 draw lists where they fit the original overlay allocation. The compiler splits large textured faces and propagates splits across shared edges.
+- Static level meshes are compiled into PS1 draw lists where they fit the original overlay allocation. The compiler splits large textured faces, propagates splits across shared edges and shares vertices between compatible materials.
+- Compiled meshes group texture uploads by CD bank to reduce repeated reads when the textures first enter VRAM.
 - Dynamic and unsupported display lists use the runtime compiler. The GTE projects the vertices and the GPU draws packets in ordering-table order.
 - Mario's animations are compressed (from 580632 to 190324 bytes) and placed in a corner of VRAM rather than being loaded from storage (we don't have the luxury of a fast cartridge to read from in the middle of a frame)
 - Custom profiler

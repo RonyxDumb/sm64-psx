@@ -564,20 +564,12 @@ else
 	EXT_FILES_SECTIONS_TXT := $(BUILD_DIR)/ext_files_sections.txt
 endif
 
-# Split the ext_files.dat build into one recursive pass.
-# Do NOT poll with `make -q` in a while loop: grouped targets plus generated
-# EXT.DAT inputs can remain "out of date" for one pass and make that loop spin
-# forever. One recursive build is sufficient and still avoids expanding this
-# choke point in the outer dependency graph.
-ifeq ($(MAKE_EXT_FILES),1)
+# The offsets used by the executable must match the archive shipped on the disc.
 $(BUILD_DIR)/ext_files_defsym.txt $(BUILD_DIR)/ext_files.dat &: $(TOOLS_DIR)/build/makextfiles $(EXT_FILES_SECTIONS_TXT)
->	$(V)$(TOOLS_DIR)/build/makextfiles $(EXT_FILES_SECTIONS_TXT) $(BUILD_DIR)/ext_files.dat $(BUILD_DIR)/ext_files_defsym.txt.tmp
+>	$(V)$(TOOLS_DIR)/build/makextfiles $(EXT_FILES_SECTIONS_TXT) $(BUILD_DIR)/ext_files.dat.tmp $(BUILD_DIR)/ext_files_defsym.txt.tmp
 >	@echo $(HARDCODED_SEGMENTS) >> $(BUILD_DIR)/ext_files_defsym.txt.tmp
+>	@mv $(BUILD_DIR)/ext_files.dat.tmp $(BUILD_DIR)/ext_files.dat
 >	@mv $(BUILD_DIR)/ext_files_defsym.txt.tmp $(BUILD_DIR)/ext_files_defsym.txt
-else
-$(BUILD_DIR)/ext_files_defsym.txt $(BUILD_DIR)/ext_files.dat &:
->	$(MAKE) $(BUILD_DIR)/ext_files.dat MAKE_EXT_FILES=1
-endif
 
 #==============================================================================#
 # Generated Source Code Files                                                  #

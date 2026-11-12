@@ -10,7 +10,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from psx_static_mesh import Triangle, Vertex, compile_mesh, emit_list, read_combiners, select_geometry_variant, tessellate, uv_offsets
+from psx_static_mesh import Texture, Triangle, Vertex, compile_mesh, emit_list, read_combiners, select_geometry_variant, tessellate, uv_offsets
 
 
 class RendererRegressionTests(unittest.TestCase):
@@ -293,17 +293,40 @@ const Gfx root[] = {
     gsDPPipeSync(),
     gsDPSetCombineMode(G_CC_MODULATERGB, G_CC_MODULATERGB),
     gsSPTexture(0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON),
-    gsDPSetTextureImage(G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, texture),
+    gsDPSetTextureImage(G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, late_texture),
+    gsDPSetTextureImage(G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, early_texture),
+    gsDPSetTextureImage(G_IM_FMT_RGBA, G_IM_SIZ_16b, 1, late_texture_2),
     gsSPVertex(triangle, 3, 0),
     gsSP1Triangle(0, 1, 2, 0),
     gsSPEndDisplayList(),
 };
 """
-        output = compile_mesh(source, {"texture": (32, 32, 0)}, read_combiners())
-        self.assertIn("DL_CMD_STATIC_MESH) | (1)", output)
-        self.assertIn("DL_CMD_SEG_TEX", output)
+        textures = {
+            "late_texture": Texture(32, 32, False, 8),
+            "early_texture": Texture(32, 32, False, 4),
+            "late_texture_2": Texture(32, 32, False, 8),
+        }
+        output = compile_mesh(source, textures, read_combiners())
+        preamble, _, commands = output.partition("DL_CMD_SEG_TEX")
+        self.assertIn("DL_CMD_STATIC_MESH) | (3)", preamble)
+        self.assertLess(preamble.index("(early_texture)"), preamble.index("(late_texture)"))
+        self.assertLess(preamble.index("(late_texture)"), preamble.index("(late_texture_2)"))
+        self.assertLess(commands.index("(late_texture)"), commands.index("(early_texture)"))
+        self.assertLess(commands.index("(early_texture)"), commands.index("(late_texture_2)"))
         self.assertIn("DL_CMD_STATIC_TRI", output)
         self.assertNotIn("gsSPVertex(", output)
+
+    def test_compatible_faces_share_vertices_across_material_changes(self):
+        a = Vertex((0, 0, 0), (0, 0), (0, 0, 127))
+        b = Vertex((80, 0, 0), (32, 0), (0, 0, 127))
+        c = Vertex((0, 80, 0), (0, 32), (0, 0, 127))
+        face = Triangle((a, b, c), (32, 32), "PRIM_FLAG_TEXTURED")
+        material = ("DL_PACK_OP(DL_CMD_SEG_TEX)", "(uintptr_t) (next_texture)")
+        source, _ = emit_list("mesh", "const Gfx mesh[] = {", [face, material, face])
+        self.assertEqual(source.count("DL_CMD_SEG_VTX"), 1)
+        first, _, rest = source.partition("DL_CMD_STATIC_TRI")
+        self.assertNotIn("DL_CMD_SEG_TEX", first)
+        self.assertLess(rest.index("DL_CMD_SEG_TEX"), rest.index("DL_CMD_STATIC_TRI"))
 
 
 if __name__ == "__main__":
