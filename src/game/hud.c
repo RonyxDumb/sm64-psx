@@ -100,13 +100,29 @@ void render_hud_small_tex_lut(s32 x, s32 y, u8 *texture) {
 /**
  * Renders power meter health segment texture using a table list.
  */
+/*
+ * The PS1 HUD uses top-left coordinates, but the meter animation still
+ * uses SM64's bottom-left Y values. Move it below the top-row counters.
+ */
+static s16 power_meter_draw_y(void) {
+#ifdef TARGET_PSX
+    if (sPowerMeterHUD.animation == POWER_METER_HIDING) {
+        // Hide towards the bottom rather than sweeping over the coin counter.
+        return 140 - (sPowerMeterHUD.y - 200);
+    }
+    return sPowerMeterHUD.y - 60;
+#else
+    return sPowerMeterHUD.y;
+#endif
+}
+
 void render_power_meter_health_segment(s16 numHealthWedges) {
     u8 *(*healthLUT)[];
 
     healthLUT = segmented_to_virtual(&power_meter_health_segments_lut);
 
     gfx_emit_tex(segmented_to_virtual((*healthLUT)[numHealthWedges - 1]));
-	gfx_emit_sprite(sPowerMeterHUD.x + 16, YRES - sPowerMeterHUD.y - 32 + 16);
+	gfx_emit_sprite(sPowerMeterHUD.x + 16, YRES - power_meter_draw_y() - 32 + 16);
 }
 
 /**
@@ -119,9 +135,9 @@ void render_dl_power_meter(s16 numHealthWedges) {
     /* create_dl_ortho_matrix flips Y for geometry but gfx_emit_sprite
      * accepts raw top-left GPU coordinates. Convert the frame's Y edges
      * back into that modelview space so they line up with the health sprite. */
-    gfx_emit_screen_quad(sPowerMeterHUD.x, sPowerMeterHUD.y + 32, sPowerMeterHUD.x + 32, sPowerMeterHUD.y - 32);
+    gfx_emit_screen_quad(sPowerMeterHUD.x, power_meter_draw_y() + 32, sPowerMeterHUD.x + 32, power_meter_draw_y() - 32);
     gfx_emit_tex(segmented_to_virtual(texture_power_meter_right_side));
-    gfx_emit_screen_quad(sPowerMeterHUD.x + 32, sPowerMeterHUD.y + 32, sPowerMeterHUD.x + 64, sPowerMeterHUD.y - 32);
+    gfx_emit_screen_quad(sPowerMeterHUD.x + 32, power_meter_draw_y() + 32, sPowerMeterHUD.x + 64, power_meter_draw_y() - 32);
     if(numHealthWedges != 0) {
         render_power_meter_health_segment(numHealthWedges);
     }
@@ -251,7 +267,7 @@ void render_hud_power_meter(void) {
 
     /* The original hidden animation moves Y beyond the screen before
      * marking the state hidden. Keep its last frames off the GPU too. */
-    if (sPowerMeterHUD.y < YRES + 32) {
+    if (power_meter_draw_y() < YRES + 32) {
         render_dl_power_meter(shownHealthWedges);
     }
 

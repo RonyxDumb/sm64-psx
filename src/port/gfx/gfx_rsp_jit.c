@@ -394,8 +394,16 @@ static int max3(int x, int y, int z) {
 			case (u8) G_ENDDL: {
 			end:
 				bool was_useful = out != out_start;
+				/* Material-only display lists are shared between models.
+				 * They contain CPU-side combiner/tile/cull state but emit no
+				 * PS1 draw opcodes. Destroying them on their first compile
+				 * makes coins, tree foliage and menu buttons lose materials
+				 * when the list is reused. No output has been written yet
+				 * in this case, so keep their original N64 state commands.
+				 */
+				if(!was_useful) return false;
 				*(out++) = DL_PACK_OP(DL_CMD_END);
-				return was_useful;
+				return true;
 			}
 		}
 		cmd++;

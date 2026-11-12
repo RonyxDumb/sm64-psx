@@ -11,6 +11,22 @@ from psx_static_mesh import Triangle, Vertex, compile_mesh, emit_list, read_comb
 
 
 class RendererRegressionTests(unittest.TestCase):
+    def test_shared_material_display_lists_preserve_original_commands(self):
+        jit = (ROOT / "src/port/gfx/gfx_rsp_jit.c").read_text()
+        self.assertIn("if(!was_useful) return false;", jit)
+        self.assertIn("*(out++) = DL_PACK_OP(DL_CMD_END);", jit)
+        coin = (ROOT / "actors/coin/model.inc.c").read_text()
+        menu = (ROOT / "levels/menu/leveldata.c").read_text()
+        self.assertIn("coin_seg3_dl_03007780", coin)
+        self.assertIn("dl_tex_block_menu_save_button_base", menu)
+
+    def test_power_meter_stays_below_coin_counter(self):
+        hud = (ROOT / "src/game/hud.c").read_text()
+        self.assertIn("static s16 power_meter_draw_y(void)", hud)
+        self.assertIn("return sPowerMeterHUD.y - 60;", hud)
+        self.assertIn("YRES - power_meter_draw_y() - 32 + 16", hud)
+        self.assertIn("print_text(168, HUD_TOP_Y,", hud)
+
     def test_xa_loop_position_is_not_polled_every_frame(self):
         audio = (ROOT / "src/port/psx/audio_psx.c").read_text()
         self.assertIn("#define XA_POSITION_POLL_FRAMES 4", audio)
