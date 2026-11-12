@@ -4,7 +4,8 @@
 /*
  * PS1 representation of SM64's 00_sound_player sequence.
  * V4 stores large event tables in EXT.DAT and keeps only a tiny index in the ELF.
- * Timing values are in original sound-player ticks (nominally 240 Hz).
+ * Sequence timings are in 96 Hz musical ticks (120 BPM, 48 ticks per beat).
+ * Vibrato delay uses the separate N64 synthesis-update clock.
  */
 #define SFX_EVENT_PAN_MASK   0x7F
 #define SFX_EVENT_CONTINUOUS 0x80

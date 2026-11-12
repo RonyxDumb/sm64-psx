@@ -394,12 +394,14 @@ $(shell mkdir -p $(dir $(BGM_TRACK_LIST)))
 $(file >$(BGM_TRACK_LIST),$(BGM_TRACKS))
 endif
 
-$(BUILD_DIR)/bgm/%.track.xa: .local/%.wav $(PSXAVENC)
+$(BUILD_DIR)/bgm/%.track.xa: .local/%.wav $(PSXAVENC) Makefile.psx.mk
 >	$(V)mkdir -p $(dir $@)
->	$(V)$(PSXAVENC) -t xa -f 37800 -b 8 -c 2 -F $(*:track=) -C 0 $< $@
+>	$(V)$(PSXAVENC) -t xa -f 37800 -b 4 -c 2 -F $(*:track=) -C 0 $< $@
 
 $(BUILD_DIR)/bgm/pack.xa $(BUILD_DIR)/bgm/info.dat &: $(TOOLS_DIR)/interleave_xa.py $(BGM_TRACK_LIST) $(filter-out -,$(BGM_TRACKS))
->	$(V)$(PYTHON) $(TOOLS_DIR)/interleave_xa.py $(BUILD_DIR)/bgm/info.dat $(BUILD_DIR)/bgm/pack.xa $(BGM_TRACKS)
+>	$(V)$(PYTHON) $(TOOLS_DIR)/interleave_xa.py $(BUILD_DIR)/bgm/info.dat.tmp $(BUILD_DIR)/bgm/pack.xa.tmp $(BGM_TRACKS)
+>	$(V)mv $(BUILD_DIR)/bgm/info.dat.tmp $(BUILD_DIR)/bgm/info.dat
+>	$(V)mv $(BUILD_DIR)/bgm/pack.xa.tmp $(BUILD_DIR)/bgm/pack.xa
 
 # Sound files
 SOUND_BANK_FILES    := $(wildcard sound/sound_banks/*.json)

@@ -509,6 +509,7 @@ def compile_layer(label: str, base_tick: int, timeline: list[tuple[int, int, Cha
 
     pc = label_to_pc[label]
     local_tick = 0
+    last_note_ticks = 0
     transpose = 0
     local_pan = 64
     local_instrument: tuple[int, int] | None = None
@@ -577,7 +578,7 @@ def compile_layer(label: str, base_tick: int, timeline: list[tuple[int, int, Cha
                 warnings.append(f"{label}: layer_loopend without loop")
             continue
 
-        if op in ("layer_delay", "layer_shortdelay") and len(parts) >= 2:
+        if op in ("layer_delay", "layer_delay_long", "layer_shortdelay") and len(parts) >= 2:
             local_tick += max(0, parse_number(parts[1]))
             if local_tick > 0xFFFF:
                 break
@@ -621,7 +622,7 @@ def compile_layer(label: str, base_tick: int, timeline: list[tuple[int, int, Cha
             porta_time = 0
             continue
 
-        if op in ("layer_note0", "layer_note1", "layer_note2"):
+        if op in ("layer_note0", "layer_note1", "layer_note1_long", "layer_note2"):
             abs_tick = base_tick + local_tick
             ch = state_at(timeline, abs_tick)
 
@@ -633,29 +634,27 @@ def compile_layer(label: str, base_tick: int, timeline: list[tuple[int, int, Cha
                 play_ticks = max(0, parse_number(parts[2]))
                 velocity = parse_number(parts[3], 127)
                 duration_arg = clamp(parse_number(parts[4]), 0, 255)
-                gate_ticks = (play_ticks * duration_arg) // 256
-                if play_ticks > 0 and duration_arg > 0 and gate_ticks == 0:
-                    gate_ticks = 1
-            elif op == "layer_note1":
+                last_note_ticks = play_ticks
+            elif op in ("layer_note1", "layer_note1_long"):
                 if len(parts) < 4:
                     warnings.append(f"{label}: malformed layer_note1")
                     continue
                 raw_note = parse_number(parts[1])
                 play_ticks = max(0, parse_number(parts[2]))
                 velocity = parse_number(parts[3], 127)
-                # noteDuration == 0 in the large-note interpreter: sustain to
-                # the next layer event / delay boundary.
-                gate_ticks = play_ticks if play_ticks > 0 else 1
+                last_note_ticks = play_ticks
+                duration_arg = 0
             else:
-                # Not used by stock 00_sound_player.s, but retain sensible
-                # semantics for custom sources: duration is also the advance.
                 if len(parts) < 4:
                     warnings.append(f"{label}: malformed layer_note2")
                     continue
                 raw_note = parse_number(parts[1])
                 velocity = parse_number(parts[2], 127)
-                play_ticks = max(0, parse_number(parts[3]))
-                gate_ticks = play_ticks if play_ticks > 0 else 1
+                play_ticks = last_note_ticks
+                duration_arg = clamp(parse_number(parts[3]), 0, 255)
+
+            # The N64 player releases once the remaining delay reaches duration.
+            gate_ticks = max(1, play_ticks - (play_ticks * duration_arg) // 256)
 
             total_transpose = transpose + ch.transpose
             note = clamp(raw_note + total_transpose, 0, 127)

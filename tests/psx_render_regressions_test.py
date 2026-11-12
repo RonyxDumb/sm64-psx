@@ -91,25 +91,27 @@ class RendererRegressionTests(unittest.TestCase):
         self.assertIn("print_text(168, HUD_TOP_Y,", hud)
 
     def test_xa_loop_position_is_not_polled_every_frame(self):
+        music = (ROOT / "src/port/psx/music_psx.c").read_text()
+        self.assertIn("#define XA_POLL_FRAMES 2", music)
+        self.assertIn("if(poll_countdown != 0)", music)
+        self.assertIn("poll_countdown = XA_POLL_FRAMES - 1;", music)
         audio = (ROOT / "src/port/psx/audio_psx.c").read_text()
-        self.assertIn("#define XA_POSITION_POLL_FRAMES 4", audio)
-        self.assertIn("if(xa_position_poll_countdown != 0)", audio)
-        self.assertIn("xa_position_poll_countdown = XA_POSITION_POLL_FRAMES - 1;", audio)
-        self.assertIn("sfx_backend_tick();", audio)
+        self.assertIn("void audio_backend_vblank(void)", audio)
+        self.assertIn("psx_music_tick();", audio)
 
     def test_missing_music_keeps_the_xa_track_numbers(self):
         with tempfile.TemporaryDirectory() as tmp:
             track = Path(tmp) / "real.xa"
             info = Path(tmp) / "info.dat"
             pack = Path(tmp) / "pack.xa"
-            sector = b"A" * 2336
+            sector = bytes((1, 0, 0x64, 0x01)) * 2 + b"A" * (2336 - 8)
             track.write_bytes(sector * 2)
             subprocess.run([
                 sys.executable, ROOT / "tools/interleave_xa.py", info, pack, "-", track, "-",
             ], check=True)
             self.assertEqual(struct.unpack("<6I", info.read_bytes()),
-                             (0xFFFFFFFF, 0xFFFFFFFF, 0, 4, 0xFFFFFFFF, 0xFFFFFFFF))
-            self.assertEqual(pack.read_bytes()[4 * 2336:5 * 2336], sector)
+                             (0xFFFFFFFF, 0xFFFFFFFF, 0, 16, 0xFFFFFFFF, 0xFFFFFFFF))
+            self.assertEqual(pack.read_bytes()[8 * 2336:9 * 2336], sector)
 
     def test_completed_ps1_framebuffer_is_presented(self):
         source = (ROOT / "src/port/psx/gfx_framebuffers_psx.c").read_text()

@@ -87,8 +87,22 @@ void psx_cd_run_cmd(u8 cmd, const u8* args, int arg_count, u8* result, int resul
 		"CD command failed", "CD-ROM command %02x failed\n", cmd);
 }
 
-bool psx_cd_get_audio_position(MinSecFrame* position) {
-	return try_cd_command(CDROM_GETLOCL, NULL, 0, position->bytes, 3);
+static u32 from_bcd(u8 value) {
+	return (value >> 4) * 10 + (value & 15);
+}
+
+bool psx_cd_get_audio_lba(u32* lba) {
+	u8 location[8];
+	if(!try_cd_command(CDROM_GETLOCL, NULL, 0, location, sizeof(location))) {
+		return false;
+	}
+	u32 sector = (from_bcd(location[0]) * 60 + from_bcd(location[1])) * 75 +
+	             from_bcd(location[2]);
+	if(sector < 150) {
+		return false;
+	}
+	*lba = sector - 150;
+	return true;
 }
 
 MinSecFrame lba_to_msf(u32 lba) {
@@ -101,14 +115,7 @@ MinSecFrame lba_to_msf(u32 lba) {
 }
 
 void psx_cd_do_read(u8* buf, u32 logical_block, u32 sector_count, u8* excess_buf) {
-	MinSecFrame bak_msf = cd_audio_start_msf;
-	if(cd_playing_audio) {
-		u8 stat;
-		psx_cd_run_cmd(CDROM_GETPARAM, NULL, 0, &stat, 1);
-		if(!(stat & CDROM_STAT_SEEK)) {
-			psx_cd_get_audio_position(&bak_msf);
-		}
-	}
+	psx_music_suspend_cd();
 
 	psx_cd_run_cmd(CDROM_SETMODE, (const u8[]) {MODE_2X_SPEED}, 1, NULL, 0);
 	MinSecFrame msf = lba_to_msf(logical_block);
@@ -142,12 +149,6 @@ void psx_cd_do_read(u8* buf, u32 logical_block, u32 sector_count, u8* excess_buf
 	}
 	psx_cd_run_cmd(CDROM_PAUSE, NULL, 0, NULL, 0);
 	psx_cd_await_interrupt(2, NULL, 0);
-
-	if(cd_playing_audio) {
-		psx_cd_run_cmd(CDROM_SETMODE, (const u8[]) {MODE_XA_ADPCM | MODE_XA_SECTOR_FILTER | MODE_2X_SPEED}, 1, NULL, 0);
-		psx_cd_run_cmd(CDROM_SETLOC, (u8*) &bak_msf, 3, NULL, 0);
-		psx_cd_run_cmd(CDROM_READS, NULL, 0, NULL, 0);
-	}
 }
 
 #define UNALIGNED_U32(p) ((u32) *(u8*) (p) | (u32) *((u8*) (p) + 1) << 8 | (u32) *((u8*) (p) + 2) << 16 | (u32) *((u8*) (p) + 3) << 24)

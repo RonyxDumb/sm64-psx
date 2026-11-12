@@ -1,3 +1,78 @@
+#if !defined(NO_AUDIO) || (defined(TARGET_PSX) && !defined(BENCH))
+#include "sm64.h"
+#include "dialog_ids.h"
+#include "sounds.h"
+
+// Dialog sounds
+// The US difference is the sound for DIALOG_037 ("I win! You lose! Ha ha ha ha!
+// You're no slouch, but I'm a better sledder! Better luck next time!"), spoken
+// by Koopa instead of the penguin in JP.
+
+#define UKIKI 0
+#define TUXIE 1
+#define BOWS1 2 // Bowser Intro / Doors Laugh
+#define KOOPA 3
+#define KBOMB 4
+#define BOO 5
+#define BOMB 6
+#define BOWS2 7 // Bowser Battle Laugh
+#define GRUNT 8
+#define WIGLR 9
+#define YOSHI 10
+#define _ 0xFF
+
+#ifdef VERSION_JP
+#define DIFF KOOPA
+#else
+#define DIFF TUXIE
+#endif
+
+static const u8 sDialogSpeaker[] = {
+    //       0      1      2      3      4      5      6      7      8      9
+    /* 0*/ _,     BOMB,  BOMB,  BOMB,  BOMB,  KOOPA, KOOPA, KOOPA, _,     KOOPA,
+    /* 1*/ _,     _,     _,     _,     _,     _,     _,     KBOMB, _,     _,
+    /* 2*/ _,     BOWS1, BOWS1, BOWS1, BOWS1, BOWS1, BOWS1, BOWS1, BOWS1, BOWS1,
+    /* 3*/ _,     _,     _,     _,     _,     _,     _,     DIFF,  _,     _,
+    /* 4*/ _,     KOOPA, _,     _,     _,     _,     _,     BOMB,  _,     _,
+    /* 5*/ _,     _,     _,     _,     _,     TUXIE, TUXIE, TUXIE, TUXIE, TUXIE,
+    /* 6*/ _,     _,     _,     _,     _,     _,     _,     BOWS2, _,     _,
+    /* 7*/ _,     _,     _,     _,     _,     _,     _,     _,     _,     UKIKI,
+    /* 8*/ UKIKI, _,     _,     _,     _,     BOO,   _,     _,     _,     _,
+    /* 9*/ BOWS2, _,     BOWS2, BOWS2, _,     _,     _,     _,     BOO,   BOO,
+    /*10*/ UKIKI, UKIKI, _,     _,     _,     BOMB,  BOMB,  BOO,   BOO,   _,
+    /*11*/ _,     _,     _,     _,     GRUNT, GRUNT, KBOMB, GRUNT, GRUNT, _,
+    /*12*/ _,     _,     _,     _,     _,     _,     _,     _,     KBOMB, _,
+    /*13*/ _,     _,     TUXIE, _,     _,     _,     _,     _,     _,     _,
+    /*14*/ _,     _,     _,     _,     _,     _,     _,     _,     _,     _,
+    /*15*/ WIGLR, WIGLR, WIGLR, _,     _,     _,     _,     _,     _,     _,
+    /*16*/ _,     YOSHI, _,     _,     _,     _,     _,     _,     WIGLR, _
+};
+#undef _
+STATIC_ASSERT(ARRAY_COUNT(sDialogSpeaker) == DIALOG_COUNT,
+              "change this array if you are adding dialogs");
+
+static const s32 sDialogSpeakerVoice[] = {
+    SOUND_OBJ_UKIKI_CHATTER_LONG,
+    SOUND_OBJ_BIG_PENGUIN_YELL,
+    SOUND_OBJ_BOWSER_INTRO_LAUGH,
+    SOUND_OBJ_KOOPA_TALK,
+    SOUND_OBJ_KING_BOBOMB_TALK,
+    SOUND_OBJ_BOO_LAUGH_LONG,
+    SOUND_OBJ_BOBOMB_BUDDY_TALK,
+    SOUND_OBJ_BOWSER_LAUGH,
+    SOUND_OBJ2_BOSS_DIALOG_GRUNT,
+    SOUND_OBJ_WIGGLER_TALK,
+    SOUND_GENERAL_YOSHI_TALK,
+#if defined(VERSION_JP) || defined(VERSION_US)
+    NO_SOUND,
+    NO_SOUND,
+    NO_SOUND,
+    NO_SOUND,
+#endif
+};
+
+#endif
+
 #ifdef NO_AUDIO
 
 // stub version of all audio functions
@@ -86,33 +161,56 @@ typedef s32 FadeT;
 //	return 0;
 //}
 void audio_signal_game_loop_tick(void) {}
+#if !defined(TARGET_PSX) || defined(SERIAL) || defined(BENCH)
 void seq_player_fade_out(UNUSED u8 player, UNUSED u16 fadeDuration) {}
 void fade_volume_scale(UNUSED u8 player, UNUSED u8 targetScale, UNUSED u16 fadeDuration) {}
-void process_level_music_dynamics(void) {}
-void unused_8031FED0(UNUSED u8 player, UNUSED u32 bits, UNUSED s8 arg2) {}
 void seq_player_lower_volume(UNUSED u8 player, UNUSED u16 fadeDuration, UNUSED u8 percentage) {}
 void seq_player_unlower_volume(UNUSED u8 player, UNUSED u16 fadeDuration) {}
+#endif
+void process_level_music_dynamics(void) {}
+void unused_8031FED0(UNUSED u8 player, UNUSED u32 bits, UNUSED s8 arg2) {}
+#if !defined(TARGET_PSX) || defined(SERIAL) || defined(BENCH)
 void set_audio_muted(UNUSED u8 muted) {}
+#endif
 void sound_init(void) {}
 void get_currently_playing_sound(UNUSED u8 bank, UNUSED u8 *numPlayingSounds, UNUSED u8 *numSoundsInBank, UNUSED u8 *soundId) {}
+#if !defined(TARGET_PSX) || defined(BENCH)
 void stop_sound(UNUSED u32 soundBits, UNUSED f32 *pos) {}
 void stop_sounds_from_source(UNUSED f32 *pos) {}
 void stop_sounds_in_continuous_banks(void) {}
 void sound_banks_disable(UNUSED u8 player, UNUSED u16 bankMask) {}
 void sound_banks_enable(UNUSED u8 player, UNUSED u16 bankMask) {}
+#endif
 u8 unused_803209D8(UNUSED u8 player, UNUSED u8 channelIndex, UNUSED u8 arg2) {
 	return 0;
 }
 void set_sound_moving_speed(UNUSED u8 bank, UNUSED u8 speed) {}
+#if defined(TARGET_PSX) && !defined(BENCH)
+void play_dialog_sound(u8 dialogID) {
+    u8 speaker = dialogID < DIALOG_COUNT ? sDialogSpeaker[dialogID] : 0xff;
+    if (speaker != 0xff) {
+        play_sound(sDialogSpeakerVoice[speaker], gGlobalSoundSource);
+        if (speaker == BOWS1) {
+            play_music(SEQ_PLAYER_ENV, SEQ_EVENT_KOOPA_MESSAGE, 0);
+        }
+    }
+#ifndef VERSION_JP
+    if (dialogID == DIALOG_010 || dialogID == DIALOG_011 || dialogID == DIALOG_012) {
+        play_puzzle_jingle();
+    }
+#endif
+}
+#else
 void play_dialog_sound(UNUSED u8 dialogID) {}
-//void play_music(UNUSED u8 player, UNUSED u16 seqArgs, UNUSED u16 fadeTimer) {}
+#endif
+void drop_queued_background_music(void) {}
+void func_80320ED8(void) {}
+#if !defined(TARGET_PSX) || defined(SERIAL) || defined(BENCH)
 void stop_background_music(UNUSED u16 seqId) {}
 void fadeout_background_music(UNUSED u16 seqId, UNUSED u16 fadeOut) {}
-void drop_queued_background_music(void) {}
 u16 get_current_background_music(void) {
 	return -1;
 }
-void func_80320ED8(void) {}
 void play_secondary_music(UNUSED u8 seqId, UNUSED u8 bgMusicVolume, UNUSED u8 volume, UNUSED u16 fadeTimer) {}
 void func_80321080(UNUSED u16 fadeTimer) {}
 void func_803210D4(UNUSED u16 fadeDuration) {}
@@ -123,8 +221,33 @@ void play_star_fanfare(void) {}
 void play_power_star_jingle(UNUSED u8 arg0) {}
 void play_race_fanfare(void) {}
 void play_toads_jingle(void) {}
+#else
+void play_course_clear(void) {
+    play_music(SEQ_PLAYER_ENV, SEQ_EVENT_CUTSCENE_COLLECT_STAR, 0);
+}
+void play_peachs_jingle(void) {
+    play_music(SEQ_PLAYER_ENV, SEQ_EVENT_PEACH_MESSAGE, 0);
+}
+void play_puzzle_jingle(void) {
+    play_music(SEQ_PLAYER_ENV, SEQ_EVENT_SOLVE_PUZZLE, 0);
+}
+void play_star_fanfare(void) {
+    play_music(SEQ_PLAYER_ENV, SEQ_EVENT_HIGH_SCORE, 0);
+}
+void play_power_star_jingle(UNUSED u8 arg0) {
+    play_music(SEQ_PLAYER_ENV, SEQ_EVENT_CUTSCENE_STAR_SPAWN, 0);
+}
+void play_race_fanfare(void) {
+    play_music(SEQ_PLAYER_ENV, SEQ_EVENT_RACE, 0);
+}
+void play_toads_jingle(void) {
+    play_music(SEQ_PLAYER_ENV, SEQ_EVENT_TOAD_MESSAGE, 0);
+}
+#endif
+#if !defined(TARGET_PSX) || defined(BENCH)
 void sound_reset(UNUSED u8 presetId) {}
 void audio_set_sound_mode(UNUSED u8 soundMode) {}
+#endif
 
 #if defined(VERSION_JP) || defined(VERSION_US)
 void unused_80321460(UNUSED s32 arg0, UNUSED s32 arg1, UNUSED s32 arg2, UNUSED s32 arg3) {}
@@ -208,74 +331,6 @@ s32 gAudioErrorFlags2 = 0;
 s32 gAudioErrorFlags = 0;
 #endif
 s32 sGameLoopTicked = 0;
-
-// Dialog sounds
-// The US difference is the sound for DIALOG_037 ("I win! You lose! Ha ha ha ha!
-// You're no slouch, but I'm a better sledder! Better luck next time!"), spoken
-// by Koopa instead of the penguin in JP.
-
-#define UKIKI 0
-#define TUXIE 1
-#define BOWS1 2 // Bowser Intro / Doors Laugh
-#define KOOPA 3
-#define KBOMB 4
-#define BOO 5
-#define BOMB 6
-#define BOWS2 7 // Bowser Battle Laugh
-#define GRUNT 8
-#define WIGLR 9
-#define YOSHI 10
-#define _ 0xFF
-
-#ifdef VERSION_JP
-#define DIFF KOOPA
-#else
-#define DIFF TUXIE
-#endif
-
-u8 sDialogSpeaker[] = {
-    //       0      1      2      3      4      5      6      7      8      9
-    /* 0*/ _,     BOMB,  BOMB,  BOMB,  BOMB,  KOOPA, KOOPA, KOOPA, _,     KOOPA,
-    /* 1*/ _,     _,     _,     _,     _,     _,     _,     KBOMB, _,     _,
-    /* 2*/ _,     BOWS1, BOWS1, BOWS1, BOWS1, BOWS1, BOWS1, BOWS1, BOWS1, BOWS1,
-    /* 3*/ _,     _,     _,     _,     _,     _,     _,     DIFF,  _,     _,
-    /* 4*/ _,     KOOPA, _,     _,     _,     _,     _,     BOMB,  _,     _,
-    /* 5*/ _,     _,     _,     _,     _,     TUXIE, TUXIE, TUXIE, TUXIE, TUXIE,
-    /* 6*/ _,     _,     _,     _,     _,     _,     _,     BOWS2, _,     _,
-    /* 7*/ _,     _,     _,     _,     _,     _,     _,     _,     _,     UKIKI,
-    /* 8*/ UKIKI, _,     _,     _,     _,     BOO,   _,     _,     _,     _,
-    /* 9*/ BOWS2, _,     BOWS2, BOWS2, _,     _,     _,     _,     BOO,   BOO,
-    /*10*/ UKIKI, UKIKI, _,     _,     _,     BOMB,  BOMB,  BOO,   BOO,   _,
-    /*11*/ _,     _,     _,     _,     GRUNT, GRUNT, KBOMB, GRUNT, GRUNT, _,
-    /*12*/ _,     _,     _,     _,     _,     _,     _,     _,     KBOMB, _,
-    /*13*/ _,     _,     TUXIE, _,     _,     _,     _,     _,     _,     _,
-    /*14*/ _,     _,     _,     _,     _,     _,     _,     _,     _,     _,
-    /*15*/ WIGLR, WIGLR, WIGLR, _,     _,     _,     _,     _,     _,     _,
-    /*16*/ _,     YOSHI, _,     _,     _,     _,     _,     _,     WIGLR, _
-};
-#undef _
-STATIC_ASSERT(ARRAY_COUNT(sDialogSpeaker) == DIALOG_COUNT,
-              "change this array if you are adding dialogs");
-
-s32 sDialogSpeakerVoice[] = {
-    SOUND_OBJ_UKIKI_CHATTER_LONG,
-    SOUND_OBJ_BIG_PENGUIN_YELL,
-    SOUND_OBJ_BOWSER_INTRO_LAUGH,
-    SOUND_OBJ_KOOPA_TALK,
-    SOUND_OBJ_KING_BOBOMB_TALK,
-    SOUND_OBJ_BOO_LAUGH_LONG,
-    SOUND_OBJ_BOBOMB_BUDDY_TALK,
-    SOUND_OBJ_BOWSER_LAUGH,
-    SOUND_OBJ2_BOSS_DIALOG_GRUNT,
-    SOUND_OBJ_WIGGLER_TALK,
-    SOUND_GENERAL_YOSHI_TALK,
-#if defined(VERSION_JP) || defined(VERSION_US)
-    NO_SOUND,
-    NO_SOUND,
-    NO_SOUND,
-    NO_SOUND,
-#endif
-};
 
 u8 sNumProcessedSoundRequests = 0;
 u8 sSoundRequestCount = 0;

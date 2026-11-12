@@ -44,6 +44,7 @@ void gfx_init_buffers() {
 }
 
 static OSTime last_frame_time_us = 0;
+void audio_backend_vblank(void);
 
 void gfx_swap_buffers(bool vsync_30fps) {
 	u32* start = frame_start_packet[selected_fb];
@@ -71,6 +72,7 @@ void gfx_swap_buffers(bool vsync_30fps) {
 		IRQ_STAT = ~(1 << IRQ_VSYNC);
 		do {
 			waitForVSync();
+			audio_backend_vblank();
 		} while(last_frame_time_us != 0 && osGetTime() - last_frame_time_us < 1000000 / 30);
 		last_frame_time_us = osGetTime();
 	}

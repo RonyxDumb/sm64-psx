@@ -13,11 +13,13 @@
 #include <seq_ids.h>
 #include <sounds.h>
 #include <assert.h>
+#include <ultra64.h>
 
 #ifdef BENCH
 
 void audio_backend_init() {}
 void audio_backend_tick() {}
+void audio_backend_vblank() {}
 void play_sound(UNUSED s32, UNUSED f32*) {}
 void play_music(UNUSED u8 player, UNUSED u16 seqArgs, UNUSED u16 fadeTimer) {}
 
@@ -30,6 +32,7 @@ extern u8 _audio_sample_segment_end[];
 extern u8 _sfx_data_segment[];
 extern u8 _sfx_data_segment_end[];
 #define SPU_START_ADDR 4096
+#define SFX_SAMPLE_LOOPED 0x8000u
 
 typedef union {
 	struct {
@@ -49,53 +52,6 @@ static const SfxEvent* sfx_blob_events;
 
 static void sfx_init_hardware_reverb(u32 sample_dma_bytes);
 static void sfx_init_extdat_blob(void);
-
-#if !defined(SERIAL) && !defined(BENCH)
-static u8 track_mapping[] = {
-	0,  // SEQ_SOUND_PLAYER,                 // 0x00
-	27, // SEQ_EVENT_CUTSCENE_COLLECT_STAR,  // 0x01
-	2,  // SEQ_MENU_TITLE_SCREEN,            // 0x02
-	5,  // SEQ_LEVEL_GRASS,                  // 0x03
-	7,  // SEQ_LEVEL_INSIDE_CASTLE,          // 0x04
-	9,  // SEQ_LEVEL_WATER,                  // 0x05
-	12, // SEQ_LEVEL_HOT,                    // 0x06
-	33, // SEQ_LEVEL_BOSS_KOOPA,             // 0x07
-	13, // SEQ_LEVEL_SNOW,                   // 0x08
-	6,  // SEQ_LEVEL_SLIDE,                  // 0x09
-	14, // SEQ_LEVEL_SPOOKY,                 // 0x0A
-	19, // SEQ_EVENT_PIRANHA_PLANT,          // 0x0B
-	16, // SEQ_LEVEL_UNDERGROUND,            // 0x0C
-	28, // SEQ_MENU_STAR_SELECT,             // 0x0D
-	20, // SEQ_EVENT_POWERUP,                // 0x0E
-	21, // SEQ_EVENT_METAL_CAP,              // 0x0F
-	31, // SEQ_EVENT_KOOPA_MESSAGE,          // 0x10
-	32, // SEQ_LEVEL_KOOPA_ROAD,             // 0x11
-	29, // SEQ_EVENT_HIGH_SCORE,             // 0x12
-	15, // SEQ_EVENT_MERRY_GO_ROUND,         // 0x13
-	26, // SEQ_EVENT_RACE,                   // 0x14
-	25, // SEQ_EVENT_CUTSCENE_STAR_SPAWN,    // 0x15
-	30, // SEQ_EVENT_BOSS,                   // 0x16
-	34, // SEQ_EVENT_CUTSCENE_COLLECT_KEY,   // 0x17
-	8,  // SEQ_EVENT_ENDLESS_STAIRS,         // 0x18
-	35, // SEQ_LEVEL_BOSS_KOOPA_FINAL,       // 0x19
-	38, // SEQ_EVENT_CUTSCENE_CREDITS,       // 0x1A
-	23, // SEQ_EVENT_SOLVE_PUZZLE,           // 0x1B
-	24, // SEQ_EVENT_TOAD_MESSAGE,           // 0x1C
-	3,  // SEQ_EVENT_PEACH_MESSAGE,          // 0x1D
-	4,  // SEQ_EVENT_CUTSCENE_INTRO,         // 0x1E
-	36, // SEQ_EVENT_CUTSCENE_VICTORY,       // 0x1F
-	37, // SEQ_EVENT_CUTSCENE_ENDING,        // 0x20
-	22, // SEQ_MENU_FILE_SELECT,             // 0x21
-	39, // SEQ_EVENT_CUTSCENE_LAKITU,        // 0x22 (not in JP)
-};
-
-typedef struct {
-	MinSecFrame alignas(u32) start_msf;
-	MinSecFrame alignas(u32) end_msf;
-} BgmInfo;
-static BgmInfo bgm_info[256];
-#define XA_MISSING_TRACK 0xFFFFFFFFu
-#endif
 
 static void sfx_init_extdat_blob(void) {
     u32 blob_bytes = (u32) (_sfx_data_segment_end - _sfx_data_segment);
@@ -150,8 +106,9 @@ static void sfx_init_extdat_blob(void) {
 void audio_backend_init() {
 	SPU_CTRL = SPU_CTRL_ENABLE | SPU_CTRL_UNMUTE;
 	for(int i = 0; i < 24; i++) {
-		SPU_CH_ADSR1(i) = 0;
-		SPU_CH_ADSR2(i) = 0;
+		/* Fast attack, full sustain. The sequencer controls release. */
+		SPU_CH_ADSR1(i) = 0x000F;
+		SPU_CH_ADSR2(i) = 0x1FC0;
 		SPU_CH_ADSR_VOL(i) = 0;
 		SPU_CH_VOL_L(i) = 0x3FFF;
 		SPU_CH_VOL_R(i) = 0x3FFF;
@@ -194,36 +151,28 @@ void audio_backend_init() {
 	 * packed EXT.DAT blob once into the dynamic main pool. */
 	sfx_init_extdat_blob();
 
-#if defined(SERIAL) || defined(BENCH)
+#ifdef SERIAL
 	SPU_CDDA_VOL_L = 0;
 	SPU_CDDA_VOL_R = 0;
 #else
-	SPU_CTRL |= SPU_CTRL_CDDA;
-	SPU_CDDA_VOL_L = 0x7FFF;
-	SPU_CDDA_VOL_R = 0x7FFF;
-	psx_cd_run_cmd(CDROM_DEMUTE, NULL, 0, NULL, 0);
-
-	u32 bgm_info_lba = psx_cd_find_file_lba("BGMINFO.DAT;1");
-	psx_cd_do_read((u8*) bgm_info, bgm_info_lba, 1, NULL);
-	u32 bgm_pack_lba = psx_cd_find_file_lba("BGMPACK.XA;1");
-	for(int i = 0; i < 40; i++) {
-		if(bgm_info[i].start_msf.as_u32 == XA_MISSING_TRACK) continue;
-		bgm_info[i].start_msf = lba_to_msf(bgm_pack_lba + bgm_info[i].start_msf.as_u32);
-		bgm_info[i].end_msf = lba_to_msf(bgm_pack_lba + bgm_info[i].end_msf.as_u32);
-	}
+	psx_music_init();
 #endif
 }
 
 #ifndef BENCH
-static bool is_voice_playing(u32 voice) {
+static bool spu_voice_ended(u32 voice) {
 	if(voice < 16) {
-		return (SPU_FLAG_STATUS1 & (1 << voice)) == 0;
+		return (SPU_FLAG_STATUS1 & (1u << voice)) != 0;
 	} else {
-		return (SPU_FLAG_STATUS2 & (1u << (voice - 16))) == 0;
+		return (SPU_FLAG_STATUS2 & (1u << (voice - 16))) != 0;
 	}
 }
 
 static SampleDef find_instrument(u32 sound_bank_id, u32 instrument_id) {
+	if(instrument_id == 128) {
+		/* 28 samples per period at C5 (523.25 Hz), relative to 44.1 kHz. */
+		return (SampleDef) {.spu_freq = SFX_SAMPLE_LOOPED | 1361, .spu_addr = table[11]};
+	}
 	return (SampleDef) {.as_u32 = *((u32*) table + table[sound_bank_id] + instrument_id)};
 }
 #endif
@@ -252,22 +201,18 @@ static u16 note_freq_scales[128] = {
 /*
  * SM64 sound-player V4 for PS1 (EXT.DAT-backed event tables).
  *
- * V3 keeps the V2 absolute-timeline sequencer and adds faithful PS1-side
- * controller effects, hardware reverb routing, and safer voice/sample handling.
- * Events stay on the original absolute 240 Hz timeline and are quantized only
- * at the 30 Hz backend boundary, avoiding cumulative short-note timing error.
+ * Sequence events advance at 120 BPM with 48 ticks per quarter note. N64
+ * synthesis updates (vibrato and release) use a separate, faster clock.
  */
-#define SFX_FIRST_VOICE 2
+#define SFX_FIRST_VOICE 0
 #define SFX_LAST_VOICE  23
 #define MAX_ACTIVE_SFX  12
 #define MAX_SFX_LAYERS  4
 #define NO_SFX_VOICE 0xFF
 
-#define SFX_SEQUENCE_HZ 240
-#define SFX_BACKEND_HZ  30
-
-#define SFX_TICKS_PER_BACKEND (SFX_SEQUENCE_HZ / SFX_BACKEND_HZ)
-STATIC_ASSERT(SFX_SEQUENCE_HZ % SFX_BACKEND_HZ == 0, "SFX tick ratio must be integral");
+#define SFX_SEQUENCE_HZ (120 * 48 / 60)
+#define SFX_CONTROL_HZ 240
+#define SFX_RELEASE_UNITS_PER_FRAME (SFX_CONTROL_HZ / 30)
 
 /*
  * PS1 SPU hardware reverb.
@@ -390,6 +335,10 @@ typedef struct {
 	bool no_echo;
 	u8 channel_id;
 	u16 sfx_id;
+	u16 priority;
+	u8 transpose;
+	u32 last_request_frame;
+	const f32* source;
 	u8 layer_count;
 	ActiveSfxLayer layers[MAX_SFX_LAYERS];
 } ActiveSfx;
@@ -398,10 +347,13 @@ typedef struct {
 	bool owned;
 	bool keyed;
 	bool releasing;
+	bool looped;
 	u8 owner_instance;
 	u8 owner_layer;
 	u16 sample_addr;
+	u16 priority;
 	u32 age;
+	u32 start_update;
 
 	u16 gate_left;
 	u16 port_start_pitch;
@@ -415,8 +367,8 @@ typedef struct {
 	u8 vibrato_extent;
 
 	u8 release_rate;
-	u8 release_frames_left;
-	u8 release_frames_total;
+	u16 release_units_left;
+	u16 release_units_total;
 	u16 base_vol_l;
 	u16 base_vol_r;
 } SfxVoiceState;
@@ -424,6 +376,10 @@ typedef struct {
 static ActiveSfx active_sfx[MAX_ACTIVE_SFX] = {};
 static SfxVoiceState sfx_voice_state[24] = {};
 static u32 sfx_voice_age_clock = 1;
+static u32 sfx_update;
+static u32 sfx_game_frame;
+static u16 sfx_disabled_banks;
+static u8 sfx_sound_mode;
 
 static void key_off_voice_hw(u32 voice) {
 	if(voice < 16) {
@@ -445,7 +401,7 @@ static u16 pitch_for_note(SampleDef sample, u32 note) {
 	if(note > 127) {
 		note = 127;
 	}
-	u32 pitch = (u32) sample.spu_freq * note_freq_scales[note] / UNIT;
+	u32 pitch = (u32) (sample.spu_freq & ~SFX_SAMPLE_LOOPED) * note_freq_scales[note] / UNIT;
 	if(pitch < 1) {
 		pitch = 1;
 	} else if(pitch > 0x3FFF) {
@@ -455,11 +411,13 @@ static u16 pitch_for_note(SampleDef sample, u32 note) {
 }
 
 static void volume_for_pan(u8 velocity, u8 pan, u16* out_l, u16* out_r) {
-	u32 vol = (0x3FFFu * velocity) / 127u;
+	u32 vol = (0x3000u * velocity) / 127u;
 	u32 left;
 	u32 right;
 
-	if(pan <= 64) {
+	if(sfx_sound_mode == SOUND_MODE_MONO) {
+		left = right = vol;
+	} else if(pan <= 64) {
 		left = vol;
 		right = vol * pan / 64u;
 	} else {
@@ -469,31 +427,6 @@ static void volume_for_pan(u8 velocity, u8 pan, u16* out_l, u16* out_r) {
 
 	*out_l = (u16) left;
 	*out_r = (u16) right;
-}
-
-static void clear_voice_runtime(u8 voice, bool clear_owner) {
-	SfxVoiceState* v = &sfx_voice_state[voice];
-	v->keyed = false;
-	v->releasing = false;
-	v->gate_left = 0;
-	v->port_elapsed = 0;
-	v->port_total = 0;
-	v->vibrato_delay_left = 0;
-	v->release_frames_left = 0;
-	v->release_frames_total = 0;
-	if(clear_owner) {
-		v->owned = false;
-		v->owner_instance = NO_SFX_VOICE;
-		v->owner_layer = NO_SFX_VOICE;
-	}
-}
-
-static void hard_stop_voice(u8 voice, bool clear_owner) {
-	sfx_set_voice_reverb(voice, false);
-	key_off_voice_hw(voice);
-	SPU_CH_VOL_L(voice) = 0;
-	SPU_CH_VOL_R(voice) = 0;
-	clear_voice_runtime(voice, clear_owner);
 }
 
 static void detach_voice_from_old_layer(u8 voice) {
@@ -511,57 +444,46 @@ static void detach_voice_from_old_layer(u8 voice) {
 	v->owner_layer = NO_SFX_VOICE;
 }
 
-static s32 alloc_sfx_voice(u8 instance_idx, u8 layer_idx) {
-	for(s32 voice = SFX_FIRST_VOICE; voice <= SFX_LAST_VOICE; voice++) {
-		SfxVoiceState* v = &sfx_voice_state[voice];
-		if(!v->owned && !is_voice_playing((u32) voice)) {
-			v->owned = true;
-			v->owner_instance = instance_idx;
-			v->owner_layer = layer_idx;
-			return voice;
-		}
-	}
+static void hard_stop_voice(u8 voice) {
+	detach_voice_from_old_layer(voice);
+	sfx_set_voice_reverb(voice, false);
+	key_off_voice_hw(voice);
+	SPU_CH_VOL_L(voice) = 0;
+	SPU_CH_VOL_R(voice) = 0;
+	sfx_voice_state[voice].owned = false;
+	sfx_voice_state[voice].keyed = false;
+	sfx_voice_state[voice].releasing = false;
+}
 
+static s32 alloc_sfx_voice(u8 instance_idx, u8 layer_idx) {
+	s32 best_voice = -1;
+	u16 priority = active_sfx[instance_idx].priority;
 	for(s32 voice = SFX_FIRST_VOICE; voice <= SFX_LAST_VOICE; voice++) {
 		SfxVoiceState* v = &sfx_voice_state[voice];
 		if(!v->owned) {
-			hard_stop_voice((u8) voice, false);
-			v->owned = true;
-			v->owner_instance = instance_idx;
-			v->owner_layer = layer_idx;
-			return voice;
+			best_voice = voice;
+			break;
 		}
-	}
-
-	/* Prefer reclaiming a release tail or a voice the SPU has already stopped
-	 * before cutting off an actively sounding note. */
-	for(s32 voice = SFX_FIRST_VOICE; voice <= SFX_LAST_VOICE; voice++) {
-		SfxVoiceState* v = &sfx_voice_state[voice];
-		if(v->owned && (v->releasing || !is_voice_playing((u32) voice))) {
-			detach_voice_from_old_layer((u8) voice);
-			hard_stop_voice((u8) voice, false);
-			v->owned = true;
-			v->owner_instance = instance_idx;
-			v->owner_layer = layer_idx;
-			return voice;
+		if(v->priority > priority) {
+			continue;
 		}
-	}
-
-	/* All SFX voices are actively owned: steal the least recently triggered one. */
-	s32 best_voice = SFX_FIRST_VOICE;
-	u32 best_age = sfx_voice_state[best_voice].age;
-	for(s32 voice = SFX_FIRST_VOICE + 1; voice <= SFX_LAST_VOICE; voice++) {
-		if(sfx_voice_state[voice].age < best_age) {
-			best_age = sfx_voice_state[voice].age;
+		if(best_voice < 0 || v->priority < sfx_voice_state[best_voice].priority ||
+		   (v->priority == sfx_voice_state[best_voice].priority &&
+		    v->age < sfx_voice_state[best_voice].age)) {
 			best_voice = voice;
 		}
 	}
-
-	detach_voice_from_old_layer((u8) best_voice);
-	hard_stop_voice((u8) best_voice, false);
-	sfx_voice_state[best_voice].owned = true;
-	sfx_voice_state[best_voice].owner_instance = instance_idx;
-	sfx_voice_state[best_voice].owner_layer = layer_idx;
+	if(best_voice < 0) {
+		return -1;
+	}
+	SfxVoiceState* v = &sfx_voice_state[best_voice];
+	if(v->owned) {
+		hard_stop_voice((u8) best_voice);
+	}
+	v->owned = true;
+	v->owner_instance = instance_idx;
+	v->owner_layer = layer_idx;
+	v->priority = priority;
 	return best_voice;
 }
 
@@ -584,8 +506,8 @@ static void begin_voice_release(u8 voice) {
 		return;
 	}
 	v->releasing = true;
-	v->release_frames_total = release_frames_for_rate(v->release_rate);
-	v->release_frames_left = v->release_frames_total;
+	v->release_units_total = release_frames_for_rate(v->release_rate) * SFX_RELEASE_UNITS_PER_FRAME;
+	v->release_units_left = v->release_units_total;
 }
 
 static u16 voice_portamento_pitch(const SfxVoiceState* v) {
@@ -633,63 +555,52 @@ static u16 voice_effective_pitch(SfxVoiceState* v) {
 	return (u16) pitch;
 }
 
-static void tick_sfx_voice(u8 voice) {
+static void tick_sfx_voice(u8 voice, u32 sequence_ticks, u32 control_ticks) {
 	SfxVoiceState* v = &sfx_voice_state[voice];
-	if(!v->owned && !v->keyed && !v->releasing) {
+	if(!v->keyed || v->start_update == sfx_update) {
+		return;
+	}
+	if(!v->looped && spu_voice_ended(voice)) {
+		hard_stop_voice(voice);
 		return;
 	}
 
-	if(v->keyed && !v->releasing) {
-		if(v->gate_left != 0) {
-			if(v->gate_left <= SFX_TICKS_PER_BACKEND) {
-				v->gate_left = 0;
-				begin_voice_release(voice);
-			} else {
-				v->gate_left -= SFX_TICKS_PER_BACKEND;
-			}
+	if(!v->releasing) {
+		if(v->gate_left <= sequence_ticks) {
+			begin_voice_release(voice);
+			return;
 		}
+		v->gate_left -= sequence_ticks;
 
 		if(v->port_total != 0 && v->port_elapsed < v->port_total) {
-			u32 elapsed = v->port_elapsed + SFX_TICKS_PER_BACKEND;
+			u32 elapsed = v->port_elapsed + sequence_ticks;
 			v->port_elapsed = (u16) (elapsed > v->port_total ? v->port_total : elapsed);
 		}
 
-		if(v->vibrato_delay_left != 0) {
-			if(v->vibrato_delay_left <= SFX_TICKS_PER_BACKEND) {
-				v->vibrato_delay_left = 0;
-			} else {
-				v->vibrato_delay_left -= SFX_TICKS_PER_BACKEND;
-			}
-		} else if(v->vibrato_extent != 0) {
-			/* N64 rate arg -> rate*32 per ~240 Hz update; advance 8 updates here. */
-			v->vibrato_phase += (u32) v->vibrato_rate * 256u;
+		u32 delay = v->vibrato_delay_left < control_ticks ? v->vibrato_delay_left : control_ticks;
+		v->vibrato_delay_left -= delay;
+		if(v->vibrato_extent != 0) {
+			v->vibrato_phase += (u32) v->vibrato_rate * 32u * (control_ticks - delay);
 		}
 
 		SPU_CH_FREQ(voice) = voice_effective_pitch(v);
-	}
-
-	if(v->releasing) {
-		if(v->release_frames_left > 0) {
-			v->release_frames_left--;
-			u32 left = (u32) v->base_vol_l * v->release_frames_left / v->release_frames_total;
-			u32 right = (u32) v->base_vol_r * v->release_frames_left / v->release_frames_total;
-			SPU_CH_VOL_L(voice) = (u16) left;
-			SPU_CH_VOL_R(voice) = (u16) right;
-		}
-		if(v->release_frames_left == 0) {
-			hard_stop_voice(voice, true);
-		}
+	} else if(v->release_units_left <= control_ticks) {
+		hard_stop_voice(voice);
+	} else {
+		v->release_units_left -= control_ticks;
+		SPU_CH_VOL_L(voice) = (u32) v->base_vol_l * v->release_units_left / v->release_units_total;
+		SPU_CH_VOL_R(voice) = (u32) v->base_vol_r * v->release_units_left / v->release_units_total;
 	}
 }
 
-static void start_event_on_voice(u8 voice, const SfxEvent* event, bool no_echo) {
+static void start_event_on_voice(u8 voice, SampleDef sample, const SfxEvent* event, const ActiveSfx* instance) {
 	SfxVoiceState* v = &sfx_voice_state[voice];
-	SampleDef sample = find_instrument(event->bank_id, event->sample_id);
-	u16 note_pitch = pitch_for_note(sample, event->note);
-	u16 target_pitch = pitch_for_note(sample, event->portamento_target);
+	u16 note_pitch = pitch_for_note(sample, event->note + instance->transpose);
+	u16 target_pitch = pitch_for_note(sample, event->portamento_target + instance->transpose);
 	bool continuous = (event->pan_flags & SFX_EVENT_CONTINUOUS) != 0;
 	bool can_reuse = continuous && v->keyed && !v->releasing &&
-	                 v->sample_addr == sample.spu_addr && is_voice_playing(voice);
+	                 v->sample_addr == sample.spu_addr &&
+	                 (v->looped || v->start_update == sfx_update || !spu_voice_ended(voice));
 
 	volume_for_pan(event->velocity, event->pan_flags & SFX_EVENT_PAN_MASK, &v->base_vol_l, &v->base_vol_r);
 	v->release_rate = event->release_rate;
@@ -697,7 +608,9 @@ static void start_event_on_voice(u8 voice, const SfxEvent* event, bool no_echo) 
 	v->vibrato_rate = event->vibrato_rate;
 	v->vibrato_extent = event->vibrato_extent;
 	v->vibrato_delay_left = event->vibrato_delay_ticks;
-	v->vibrato_phase = 0;
+	if(!can_reuse) {
+		v->vibrato_phase = 0;
+	}
 	v->port_elapsed = 0;
 	v->port_total = event->portamento_ticks;
 
@@ -714,29 +627,27 @@ static void start_event_on_voice(u8 voice, const SfxEvent* event, bool no_echo) 
 		v->port_total = 0;
 	}
 	v->age = sfx_voice_age_clock++;
+	v->start_update = sfx_update;
+	v->releasing = false;
 
 	/* The PS1 SPU exposes a binary per-voice reverb send (EON). Keep the
 	 * sequence's zero/nonzero intent and honor SOUND_NO_ECHO. Set the route
 	 * before KEY-ON so the first samples of a fresh voice use the right path. */
-	sfx_set_voice_reverb(voice, !no_echo && event->reverb != 0);
+	sfx_set_voice_reverb(voice, !instance->no_echo && event->reverb != 0);
 
 	if(!can_reuse) {
 		key_off_voice_hw(voice);
 		v->sample_addr = sample.spu_addr;
+		v->looped = (sample.spu_freq & SFX_SAMPLE_LOOPED) != 0;
 		SPU_CH_ADDR(voice) = sample.spu_addr;
-		SPU_CH_FREQ(voice) = voice_effective_pitch(v);
-		SPU_CH_VOL_L(voice) = v->base_vol_l;
-		SPU_CH_VOL_R(voice) = v->base_vol_r;
+		SPU_CH_LOOP_ADDR(voice) = sample.spu_addr;
 		v->keyed = true;
-		v->releasing = false;
+	}
+	SPU_CH_FREQ(voice) = voice_effective_pitch(v);
+	SPU_CH_VOL_L(voice) = v->base_vol_l;
+	SPU_CH_VOL_R(voice) = v->base_vol_r;
+	if(!can_reuse) {
 		key_on_voice_hw(voice);
-	} else {
-		v->releasing = false;
-		v->release_frames_left = 0;
-		v->release_frames_total = 0;
-		SPU_CH_FREQ(voice) = voice_effective_pitch(v);
-		SPU_CH_VOL_L(voice) = v->base_vol_l;
-		SPU_CH_VOL_R(voice) = v->base_vol_r;
 	}
 }
 
@@ -774,11 +685,16 @@ static void dispatch_sfx_layer(u8 instance_idx, u8 layer_idx) {
 		if(event->start_tick > layer->tick_units) {
 			return;
 		}
+		layer->event_index++;
+		SampleDef sample = find_instrument(event->bank_id, event->sample_id);
+		if(sample.spu_addr == 0) {
+			continue;
+		}
 
 		if(layer->voice == NO_SFX_VOICE) {
 			s32 voice = alloc_sfx_voice(instance_idx, layer_idx);
 			if(voice < 0) {
-				return;
+				continue;
 			}
 			layer->voice = (u8) voice;
 		}
@@ -787,37 +703,106 @@ static void dispatch_sfx_layer(u8 instance_idx, u8 layer_idx) {
 		v->owned = true;
 		v->owner_instance = instance_idx;
 		v->owner_layer = layer_idx;
-		start_event_on_voice(layer->voice, event, instance->no_echo);
-
-		layer->event_index++;
+		start_event_on_voice(layer->voice, sample, event, instance);
 	}
 }
 
-static ActiveSfx* alloc_sfx_instance(void) {
+static void stop_sfx_instance(ActiveSfx* instance) {
+	for(u8 i = 0; i < instance->layer_count; i++) {
+		u8 voice = instance->layers[i].voice;
+		if(voice != NO_SFX_VOICE) {
+			hard_stop_voice(voice);
+		}
+	}
+	instance->active = false;
+}
+
+static ActiveSfx* alloc_sfx_instance(u16 priority) {
+	ActiveSfx* lowest = &active_sfx[0];
 	for(int i = 0; i < MAX_ACTIVE_SFX; i++) {
-		if(!active_sfx[i].active) {
+		ActiveSfx* instance = &active_sfx[i];
+		if(!instance->active) {
+			return instance;
+		}
+		if(instance->priority < lowest->priority) {
+			lowest = instance;
+		}
+	}
+	if(lowest->priority > priority) {
+		return NULL;
+	}
+	stop_sfx_instance(lowest);
+	return lowest;
+}
+
+static ActiveSfx* find_sfx_instance(u32 channel_id, u32 sfx_id, const f32* pos) {
+	for(int i = 0; i < MAX_ACTIVE_SFX; i++) {
+		if(active_sfx[i].active &&
+		   active_sfx[i].channel_id == channel_id &&
+		   active_sfx[i].sfx_id == sfx_id && active_sfx[i].source == pos) {
 			return &active_sfx[i];
 		}
 	}
 	return NULL;
 }
 
-static bool same_sfx_is_active(u32 channel_id, u32 sfx_id) {
-	for(int i = 0; i < MAX_ACTIVE_SFX; i++) {
-		if(active_sfx[i].active &&
-		   active_sfx[i].channel_id == channel_id &&
-		   active_sfx[i].sfx_id == sfx_id) {
-			return true;
-		}
+void stop_sound(u32 soundBits, f32* pos) {
+	u32 channel_id = (soundBits & SOUNDARGS_MASK_BANK) >> SOUNDARGS_SHIFT_BANK;
+	u32 sfx_id = (soundBits & SOUNDARGS_MASK_SOUNDID) >> SOUNDARGS_SHIFT_SOUNDID;
+	ActiveSfx* instance = find_sfx_instance(channel_id, sfx_id, pos);
+	if(instance != NULL) {
+		stop_sfx_instance(instance);
 	}
-	return false;
 }
 
-void play_sound(s32 soundBits, UNUSED f32* pos) {
+void stop_sounds_from_source(f32* pos) {
+	for(int i = 0; i < MAX_ACTIVE_SFX; i++) {
+		if(active_sfx[i].active && active_sfx[i].source == pos) {
+			stop_sfx_instance(&active_sfx[i]);
+		}
+	}
+}
+
+void stop_sounds_in_continuous_banks(void) {
+	for(int i = 0; i < MAX_ACTIVE_SFX; i++) {
+		if(active_sfx[i].active && !active_sfx[i].discrete) {
+			stop_sfx_instance(&active_sfx[i]);
+		}
+	}
+}
+
+void sound_banks_disable(u8 player, u16 bankMask) {
+	if(player == SEQ_PLAYER_SFX) {
+		sfx_disabled_banks |= bankMask;
+		for(int i = 0; i < MAX_ACTIVE_SFX; i++) {
+			if(active_sfx[i].active && (bankMask & (1u << active_sfx[i].channel_id))) {
+				stop_sfx_instance(&active_sfx[i]);
+			}
+		}
+	}
+}
+
+void sound_banks_enable(u8 player, u16 bankMask) {
+	if(player == SEQ_PLAYER_SFX) {
+		sfx_disabled_banks &= ~bankMask;
+	}
+}
+
+void audio_set_sound_mode(u8 soundMode) {
+	sfx_sound_mode = soundMode;
+}
+
+void sound_reset(UNUSED u8 presetId) {
+	sfx_disabled_banks = 0;
+	stop_sounds_in_continuous_banks();
+}
+
+void play_sound(s32 soundBits, f32* pos) {
 	u32 channel_id = ((u32) soundBits & SOUNDARGS_MASK_BANK) >> SOUNDARGS_SHIFT_BANK;
 	u32 sfx_id = ((u32) soundBits & SOUNDARGS_MASK_SOUNDID) >> SOUNDARGS_SHIFT_SOUNDID;
 
-	if(channel_id >= sfx_channel_count || sfx_id >= sfx_count_per_channel[channel_id]) {
+	if(!sfx_blob_header || channel_id >= sfx_channel_count ||
+	   (sfx_disabled_banks & (1u << channel_id)) || sfx_id >= sfx_count_per_channel[channel_id]) {
 		return;
 	}
 
@@ -833,14 +818,20 @@ void play_sound(s32 soundBits, UNUSED f32* pos) {
 
 	bool discrete = (soundBits & SOUND_DISCRETE) != 0;
 	bool no_echo = (soundBits & SOUND_NO_ECHO) != 0;
-	/* Suppress only an already-active instance of the same non-discrete SFX.
-	 * Different SFX can share a sample address; using the SPU address as a
-	 * duplicate key incorrectly silences jingles and other one-shot sounds. */
-	if(!discrete && same_sfx_is_active(channel_id, sfx_id)) {
-		return;
+	ActiveSfx* instance = find_sfx_instance(channel_id, sfx_id, pos);
+	if(instance != NULL) {
+		if(!discrete) {
+			instance->last_request_frame = sfx_game_frame;
+			return;
+		}
+		stop_sfx_instance(instance);
 	}
 
-	ActiveSfx* instance = alloc_sfx_instance();
+	u16 priority = ((u32) soundBits & SOUNDARGS_MASK_PRIORITY) >> SOUNDARGS_SHIFT_PRIORITY;
+	if(channel_id == SOUND_BANK_VOICE || channel_id == SOUND_BANK_MENU) {
+		priority += 256;
+	}
+	instance = alloc_sfx_instance(priority);
 	if(instance == NULL) {
 		return;
 	}
@@ -851,6 +842,15 @@ void play_sound(s32 soundBits, UNUSED f32* pos) {
 	instance->no_echo = no_echo;
 	instance->channel_id = (u8) channel_id;
 	instance->sfx_id = (u16) sfx_id;
+	instance->priority = priority;
+	instance->transpose = 0;
+	u8 red_coin_start = (SOUND_MENU_COLLECT_RED_COIN & SOUNDARGS_MASK_SOUNDID) >> SOUNDARGS_SHIFT_SOUNDID;
+	if(channel_id == SOUND_BANK_MENU && sfx_id - red_coin_start < 8) {
+		static const u8 major_scale[] = {0, 2, 4, 5, 7, 9, 11, 12};
+		instance->transpose = major_scale[sfx_id - red_coin_start];
+	}
+	instance->last_request_frame = sfx_game_frame;
+	instance->source = pos;
 	instance->layer_count = 0;
 
 	u8 layers_to_start = sfx_def->layer_count;
@@ -885,10 +885,24 @@ void play_sound(s32 soundBits, UNUSED f32* pos) {
 	}
 }
 
-static void sfx_backend_tick(void) {
-	for(u8 voice = SFX_FIRST_VOICE; voice <= SFX_LAST_VOICE; voice++) {
-		tick_sfx_voice(voice);
+void audio_backend_vblank(void) {
+	static OSTime last_update_time;
+	static u32 sequence_phase;
+	static u32 control_phase;
+	OSTime now = osGetTime();
+	u32 elapsed_us = last_update_time != 0 ? (u32) (now - last_update_time) : 16667;
+	last_update_time = now;
+	/* Large loads may span many blanks. Bound catch-up work on returning. */
+	if(elapsed_us > 250000) {
+		elapsed_us = 250000;
 	}
+	sequence_phase += elapsed_us * SFX_SEQUENCE_HZ;
+	control_phase += elapsed_us * SFX_CONTROL_HZ;
+	u32 sequence_ticks = sequence_phase / 1000000u;
+	u32 control_ticks = control_phase / 1000000u;
+	sequence_phase %= 1000000u;
+	control_phase %= 1000000u;
+	sfx_update++;
 
 	for(u8 instance_idx = 0; instance_idx < MAX_ACTIVE_SFX; instance_idx++) {
 		ActiveSfx* instance = &active_sfx[instance_idx];
@@ -903,7 +917,7 @@ static void sfx_backend_tick(void) {
 				continue;
 			}
 
-			layer->tick_units += SFX_TICKS_PER_BACKEND;
+			layer->tick_units += sequence_ticks;
 			dispatch_sfx_layer(instance_idx, layer_idx);
 			if(layer->active) {
 				any_layer_active = true;
@@ -914,68 +928,26 @@ static void sfx_backend_tick(void) {
 			instance->active = false;
 		}
 	}
-}
-
-
-bool cd_playing_audio = false;
-#if !defined(SERIAL) && !defined(BENCH)
-MinSecFrame cd_audio_start_msf;
-static u8 cur_song_idx;
-/* Reading the XA sector position requires synchronous CD-ROM commands.
- * Checking every game frame unnecessarily stalls the CPU while the disc
- * drive is streaming music. Four game frames keep loop restart latency low. */
-#define XA_POSITION_POLL_FRAMES 4
-static u8 xa_position_poll_countdown;
-#endif
-
-void play_music(UNUSED u8 player, UNUSED u16 seqArgs, UNUSED u16 fadeTimer) {
-#if !defined(SERIAL) && !defined(BENCH)
-	if((seqArgs >> 8) == SEQ_PLAYER_LEVEL) {
-		u8 seq = seqArgs & SEQ_BASE_ID;
-		if(seq >= ARRAY_COUNT(track_mapping)) return;
-		u8 track = track_mapping[seq];
-		if(track == 0 || bgm_info[track - 2].start_msf.as_u32 == XA_MISSING_TRACK) {
-			if(cd_playing_audio) {
-				psx_cd_run_cmd(CDROM_STOP, NULL, 0, NULL, 0);
-				cd_playing_audio = false;
-			}
-		} else {
-			cur_song_idx = track - 2;
-			cd_audio_start_msf = bgm_info[cur_song_idx].start_msf;
-			psx_cd_run_cmd(CDROM_SETMODE, (const u8[]) {MODE_XA_ADPCM | MODE_XA_SECTOR_FILTER | MODE_2X_SPEED}, 1, NULL, 0);
-			psx_cd_run_cmd(CDROM_SETFILTER, (const u8[]) {cur_song_idx, 0}, 2, NULL, 0);
-			psx_cd_run_cmd(CDROM_SETLOC, cd_audio_start_msf.bytes, 3, NULL, 0);
-			psx_cd_run_cmd(CDROM_READS, NULL, 0, NULL, 0);
-			cd_playing_audio = true;
-			xa_position_poll_countdown = 0;
-		}
+	for(u8 voice = SFX_FIRST_VOICE; voice <= SFX_LAST_VOICE; voice++) {
+		tick_sfx_voice(voice, sequence_ticks, control_ticks);
 	}
-#endif
 }
+
+
+#ifdef SERIAL
+void play_music(UNUSED u8 player, UNUSED u16 seqArgs, UNUSED u16 fadeTimer) {}
+#endif
 
 void audio_backend_tick() {
-	sfx_backend_tick();
-#if !defined(SERIAL) && !defined(BENCH)
-	if(!cd_playing_audio) {
-		xa_position_poll_countdown = 0;
-	} else {
-		if(xa_position_poll_countdown != 0) {
-			xa_position_poll_countdown--;
-			return;
-		}
-		xa_position_poll_countdown = XA_POSITION_POLL_FRAMES - 1;
-		MinSecFrame playing_msf;
-		u8 stat;
-		psx_cd_run_cmd(CDROM_NOP, NULL, 0, &stat, 1);
-		if((stat & CDROM_STAT_SEEK) || !psx_cd_get_audio_position(&playing_msf)) {
-			return;
-		}
-		MinSecFrame song_end_msf = bgm_info[cur_song_idx].end_msf;
-		if(((u32) playing_msf.min << 16 | (u32) playing_msf.sec << 8 | playing_msf.frame) > ((u32) song_end_msf.min << 16 | (u32) song_end_msf.sec << 8 | song_end_msf.frame)) {
-			psx_cd_run_cmd(CDROM_SETLOC, cd_audio_start_msf.bytes, 3, NULL, 0);
-			psx_cd_run_cmd(CDROM_READS, NULL, 0, NULL, 0);
+	sfx_game_frame++;
+	for(int i = 0; i < MAX_ACTIVE_SFX; i++) {
+		if(active_sfx[i].active && !active_sfx[i].discrete &&
+		   sfx_game_frame - active_sfx[i].last_request_frame > 2) {
+			stop_sfx_instance(&active_sfx[i]);
 		}
 	}
+#ifndef SERIAL
+	psx_music_tick();
 #endif
 }
 

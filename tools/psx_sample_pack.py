@@ -13,6 +13,10 @@ conv_sample_dir = sys.argv[3]
 out_sound_table_path = sys.argv[4]
 out_sound_data_path = sys.argv[5]
 
+SPU_SAMPLE_START = 0x1000
+# Leave room for the hardware Room reverb work area and DMA alignment.
+SPU_SAMPLE_LIMIT = 0x7D900
+
 def align_up(value: int, alignment: int) -> int:
 	return (value + alignment - 1) // alignment * alignment
 
@@ -30,7 +34,9 @@ class SoundRef:
 		full_path = conv_sample_dir + "/" + path + ".samplebin"
 		with open(full_path, "rb") as samplebin_handle:
 			samplebin_bytes = samplebin_handle.read()
-		self.freq = struct.unpack("<H", samplebin_bytes[0:2])[0]
+		self.freq = struct.unpack_from("<H", samplebin_bytes)[0]
+		if samplebin_bytes[2]:
+			self.freq |= 0x8000  # Looping samples set ENDX on every loop.
 		self.offset_in_data = len(out_sample_data)
 		out_sample_data += samplebin_bytes[4:]
 		assert len(out_sample_data) % 8 == 0 # SPU memory is referenced in units of 8 bytes, so it must be aligned to that
@@ -60,7 +66,7 @@ class BankDef:
 			if ref is None:
 				out += b"\0\0\0\0"
 			else:
-				out += struct.pack("<HH", ref.freq, (4096 + ref.offset_in_data) // 8)
+				out += struct.pack("<HH", ref.freq, (SPU_SAMPLE_START + ref.offset_in_data) // 8)
 
 all_banks: list[BankDef] = []
 
@@ -91,10 +97,25 @@ for bank_file_name in bank_files:
 		all_banks.append(cur_bank)
 
 out_table = bytearray()
-first_sound_def_off = align_up(len(all_banks) * 2, 4)
+if len(all_banks) != 11:
+	raise ValueError("expected 11 sound-player banks")
+# The US red-coin effects use N64 synthetic instrument 128 (a sawtooth).
+# Pack one 28-sample period as a looping SPU block. The previously unused
+# alignment halfword after the 11 bank offsets points to it.
+saw_addr = (SPU_SAMPLE_START + len(out_sample_data)) // 8
+saw = [(i if i < 14 else i - 28) * 8 // 14 for i in range(28)]
+out_sample_data.extend((0, 7))
+out_sample_data.extend((saw[i] & 15) | ((saw[i + 1] & 15) << 4) for i in range(0, 28, 2))
+sample_end = SPU_SAMPLE_START + align_up(len(out_sample_data), 256)
+if sample_end > SPU_SAMPLE_LIMIT:
+	raise ValueError(f"SFX samples require {sample_end - SPU_SAMPLE_START} SPU bytes, "
+	                 f"only {SPU_SAMPLE_LIMIT - SPU_SAMPLE_START} are available")
+
+first_sound_def_off = (len(all_banks) + 1) * 2
 for b in all_banks:
 	out_table += struct.pack("<H", first_sound_def_off // 4)
 	first_sound_def_off += len(b.sound_refs) * 4
+out_table += struct.pack("<H", saw_addr)
 for b in all_banks:
 	while len(out_table) % 4 != 0:
 		out_table += b"\0"

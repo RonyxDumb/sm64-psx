@@ -85,7 +85,7 @@ typedef union {
 #define TO_BCD(i) (((i) / 10 * 16) | ((i) % 10))
 
 MinSecFrame lba_to_msf(u32 lba);
-bool psx_cd_get_audio_position(MinSecFrame* position);
-
-extern bool cd_playing_audio;
-extern MinSecFrame cd_audio_start_msf;
+bool psx_cd_get_audio_lba(u32* lba);
+void psx_music_init(void);
+void psx_music_tick(void);
+void psx_music_suspend_cd(void);

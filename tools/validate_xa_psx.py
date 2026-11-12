@@ -1,100 +1,53 @@
 #!/usr/bin/env python3
-"""
-Validate the interleaved XA pack produced by tools/interleave_xa.py.
+"""Check the 2336-byte Mode 2 payloads and the optional BGMINFO offsets."""
 
-IMPORTANT:
-This project does NOT store 2352-byte raw CD sectors in pack.xa.
-interleave_xa.py explicitly uses 2336-byte XA sectors (Mode 2 sector payload,
-without the 12-byte sync + 4-byte sector header).
-
-Layout of each 2336-byte XA sector:
-    0..3   XA subheader copy 1: file, channel, submode, coding
-    4..7   XA subheader copy 2: duplicate
-    8..    XA payload
-
-Padding sectors inserted by interleave_xa.py are all-zero 2336-byte sectors and
-are accepted by this validator.
-"""
-
-from __future__ import annotations
-
-import sys
+import argparse
 from pathlib import Path
+import struct
 
-XA_SECTOR_SIZE = 2336
+from interleave_xa import MISSING, SECTOR_INTERVAL, XA_SECTOR_SIZE, PADDING
 
-def fail(msg: str) -> int:
-    print(f"XA validation FAILED: {msg}", file=sys.stderr)
-    return 1
 
-def main() -> int:
-    if len(sys.argv) != 2:
-        print(f"usage: {sys.argv[0]} PACK.XA", file=sys.stderr)
-        return 2
+def validate(pack, info=None):
+    bounds = list(struct.iter_unpack("<II", info.read_bytes())) if info else None
+    counts = {}
+    padding = 0
+    with pack.open("rb") as source:
+        for lba, sector in enumerate(iter(lambda: source.read(XA_SECTOR_SIZE), b"")):
+            if sector == PADDING:
+                padding += 1
+                continue
+            if len(sector) != XA_SECTOR_SIZE or sector[:4] != sector[4:8]:
+                raise ValueError(f"sector {lba}: invalid XA header")
+            track, channel, submode, coding = sector[:4]
+            if channel != 0 or submode & 0x64 != 0x64 or coding != 0x01:
+                raise ValueError(f"sector {lba}: expected 37.8 kHz 4-bit stereo XA")
+            count = counts.get(track, 0)
+            if bounds is not None:
+                if track >= len(bounds):
+                    raise ValueError(f"sector {lba}: track {track} is out of range")
+                start, end = bounds[track]
+                if lba != start + count * SECTOR_INTERVAL or lba >= end:
+                    raise ValueError(f"sector {lba}: invalid spacing for track {track}")
+            counts[track] = count + 1
+    if bounds is not None:
+        for track, (start, end) in enumerate(bounds):
+            count = counts.get(track, 0)
+            if start == MISSING and end == MISSING and count == 0:
+                continue
+            if not count or end - start != count * SECTOR_INTERVAL:
+                raise ValueError(f"track {track}: metadata length does not match pack")
+    if not counts and not padding:
+        raise ValueError("empty XA pack")
+    print(f"XA validated: {len(counts)} tracks, {sum(counts.values())} audio sectors, {padding} padding sectors")
 
-    path = Path(sys.argv[1])
-    data = path.read_bytes()
-
-    if not data:
-        return fail("empty file")
-
-    if len(data) % XA_SECTOR_SIZE:
-        return fail(
-            f"size {len(data)} is not a multiple of project XA sector size "
-            f"{XA_SECTOR_SIZE}"
-        )
-
-    sectors = len(data) // XA_SECTOR_SIZE
-    audio_sectors = 0
-    padding_sectors = 0
-
-    for n in range(sectors):
-        sec = data[n * XA_SECTOR_SIZE:(n + 1) * XA_SECTOR_SIZE]
-
-        # interleave_xa.py pads missing streams with an all-zero 2336-byte sector.
-        if not any(sec):
-            padding_sectors += 1
-            continue
-
-        sub_a = sec[0:4]
-        sub_b = sec[4:8]
-
-        if sub_a != sub_b:
-            return fail(
-                f"sector {n}: duplicated XA subheaders differ "
-                f"({sub_a.hex()} != {sub_b.hex()})"
-            )
-
-        file_no, channel_no, submode, coding = sub_a
-
-        # XA submode bit 2 = audio.
-        if not (submode & 0x04):
-            return fail(
-                f"sector {n}: expected XA audio sector, "
-                f"submode=0x{submode:02X}"
-            )
-
-        audio_sectors += 1
-
-        # XA coding-info bit 4 selects 8-bit ADPCM.
-        # Hardware target for this port is 4-bit, so bit 4 must be clear.
-        if coding & 0x10:
-            return fail(
-                f"sector {n}: 8-bit XA ADPCM detected "
-                f"(file={file_no}, channel={channel_no}, coding=0x{coding:02X}); "
-                "expected 4-bit"
-            )
-
-    if audio_sectors == 0:
-        return fail("no XA audio sectors found")
-
-    print(
-        "XA validation OK: "
-        f"{sectors} sectors x {XA_SECTOR_SIZE} bytes, "
-        f"{audio_sectors} audio, {padding_sectors} padding, "
-        "4-bit ADPCM"
-    )
-    return 0
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("pack", type=Path)
+    parser.add_argument("info", nargs="?", type=Path)
+    args = parser.parse_args()
+    try:
+        validate(args.pack, args.info)
+    except (OSError, ValueError, struct.error) as error:
+        parser.exit(1, f"XA validation failed: {error}\n")

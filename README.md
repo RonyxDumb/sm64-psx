@@ -22,6 +22,7 @@ An original copy of the game is required to extract the assets.
 - Mario's animations are compressed (from 580632 to 190324 bytes) and placed in a corner of VRAM rather than being loaded from storage (we don't have the luxury of a fast cartridge to read from in the middle of a frame)
 - Custom profiler
 - Custom texture encoder that quantizes all textures to 4 bits per pixel
+- The PS1 SPU plays the original ROM's sound effects with their musical timing and sample loops. An optional XA soundtrack uses Church of Kondo's Super Mario 64 remasters.
 - Translucent texture shadows replaced with subtractive hexagonal shadows, as the PSX doesn't support arbitrary translucency
 - The right stick pans the free camera and supplies C-button input in the original stepped camera modes.
 - (WIP) Simplified rewritten Goddard subsystem
@@ -48,7 +49,7 @@ necessary.
 
 ## Remaining issues
 
-- The soundtrack still requires WAV inputs. Sound effects can differ from the original in pitch, timing or missing notes.
+- PS1 sound effects still approximate some N64 envelopes and positional mixing. The CD drive plays one XA stream at a time, so a fanfare temporarily interrupts the background track.
 - Some animations and scripted camera shots still need gameplay validation. The interactive Mario head is unfinished.
 - Full playthroughs and routes through every subarea still need regression coverage.
 - Some faces still exhibit affine distortion, sorting errors or visible seams. Texture uploads can still pause gameplay when an asset first enters VRAM.
@@ -64,6 +65,7 @@ Dockerfile: RGB888 (default lighting) and RGB555 (`LIGHTS_15BIT=1`).
 Each successful build uploads `sm64.iso`, `sm64.cue`, the optional ELF
 debug image and SHA-256 checksums as an Actions artifact (retained for 3 days).
 Open the `.cue` file from the extracted artifact in DuckStation or PCSX-Redux.
+On manual dispatch, enable **Church of Kondo soundtrack** to prepare the 38 remastered tracks and include them in the disc image.
 
 **Required one-time setup:** GitHub runners cannot access an N64 ROM stored in
 a local folder or the ChatGPT Library. Add an Actions repository secret named
@@ -105,7 +107,8 @@ build directory.
 ## Building
 
 1. Place a *Super Mario 64* ROM named exactly `baserom.us.z64` into the repository's root directory. For now, only US ROMs are supported.
-2. (Optional) Place WAV tracks numbered `0.wav` through `37.wav` in `.local`. Missing tracks are silent and require no XA streaming. See the [track list](https://codeberg.org/malucart/sm64-psx/issues/14#issuecomment-20591789).
+2. (Optional) With FFmpeg installed, run `python3 tools/import_kondo_soundtrack.py` before `make`. It downloads the 38 lossless remasters from [Church of Kondo's Internet Archive collection](https://archive.org/details/cok_collection) and prepares numbered WAVs in `.local`. The music is composed by Koji Kondo and remastered by Church of Kondo.
+   You can also provide your own `0.wav` through `37.wav` using the [upstream track order](https://codeberg.org/malucart/sm64-psx/issues/14#issuecomment-20591789). Missing tracks are silent. Sound effects always come from the source ROM.
 3. Now you need a properly set up build environment. A Dockerfile is provided to simplify this. To use it, ensure you have [Docker](https://www.docker.com) (or a compatible alternative) installed and set up. (if on Linux, don't forget to put it in [rootless mode](https://docs.docker.com/engine/security/rootless/) as well!)
 	- If on Linux, I've included a convenience script for invoking a container from a terminal. Run `./idc` to enter a Bash shell in the container, or `./idc <command>` to run one command in it (for example, `./idc make` or `./idc make clean`). If this works for you, go to step 4.
 	- If using Zed (any OS), containers are supported right away. Open the repo, press Ctrl+Shift+P, and run the "projects: open dev container" action. The editor will act like it's running inside the container, including the terminal. Open the terminal panel in Zed and go to step 4.
