@@ -34,6 +34,18 @@ Hold L1 while pressing Start on the title screen to open the level test menu. It
 
 The US build was tested in an emulator with 2 MiB of RAM. All 31 level entries loaded from the test menu. The pause menu opened and closed, the Bob-omb Battlefield painting led to a playable act through Star Select, and Lakitu flew up to Mario and returned control after the bridge dialog. The credits played from Peach's cutscene through the cake screen.
 
+## Fixed-point migration (PS1 target)
+
+The PS1 build uses integer Q20.12 math in large parts of physics, cameras and geometry.
+Controller stick deadzone/normalization and cinematic spline weights now use integer
+math (the existing float consumer interfaces still require conversion at their
+boundaries). The PC reference renderer keeps its original floating-point behavior.
+Run `python3 tools/audit_psx_float_usage.py` to inventory remaining floating-point
+operations and types in the game source. This migration is **not complete**: moving
+every `f32`/`float` to an `int` without adapting units, data layouts and callers
+would break the game. Full playthrough and original 2 MiB hardware testing remain
+necessary.
+
 ## Remaining issues
 
 - The soundtrack still requires WAV inputs. Sound effects can differ from the original in pitch, timing or missing notes.

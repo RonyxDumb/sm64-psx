@@ -35,6 +35,14 @@ jobs:
         run: |
           cc -std=c11 -Wall -Wextra -Werror -I. tests/psx_lighting_matrix_test.c -o /tmp/psx_lighting_matrix_test
           /tmp/psx_lighting_matrix_test
+      - name: Check integer analog input and cubic spline against original float reference
+        run: |
+          cc -std=c11 -O2 -Wall -Wextra -Werror -I. tests/psx_analog_fixed_test.c -lm -o /tmp/psx_analog_fixed_test
+          /tmp/psx_analog_fixed_test
+          cc -std=c11 -O2 -Wall -Wextra -Werror -I. tests/psx_spline_fixed_test.c -lm -o /tmp/psx_spline_fixed_test
+          /tmp/psx_spline_fixed_test
+      - name: Audit remaining floating point usage
+        run: python3 tools/audit_psx_float_usage.py
       - name: Test GPU culling and flat shading without commercial assets
         run: |
           cc -std=c11 -Wall -Wextra -Werror -I. tests/psx_gpu_optimizations_test.c -o /tmp/psx_gpu_optimizations_test

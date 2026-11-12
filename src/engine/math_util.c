@@ -7,10 +7,18 @@
 
 #include "trig_tables.inc.c"
 #include "trig_tables_fixed.inc.c"
+#ifdef TARGET_PSX
+#include <port/gfx/gfx_spline_fixed.h>
+#endif
 
 // Variables for a spline curve animation (used for the flight path in the grand star cutscene)
 Vec4s *gSplineKeyframe;
+#ifdef TARGET_PSX
+/* Integer thousandths of a spline segment: no cumulative Q12 tick drift. */
+static int gSplineKeyframeProgressMilli;
+#else
 float gSplineKeyframeFraction;
+#endif
 int gSplineState;
 
 float rsqrtf(float number);
@@ -702,6 +710,7 @@ f32 atan2f(f32 y, f32 x) {
  * [0, 0, 0, 0, 1, 2, ... n-1, n, n, n, n]
  * TODO: verify the classification of the spline / figure out how polynomials were computed
  */
+#ifndef TARGET_PSX
 void spline_get_weights(Vec4f result, f32 t, UNUSED s32 c) {
     f32 tinv = 1 - t;
     f32 tinv2 = tinv * tinv;
@@ -742,6 +751,7 @@ void spline_get_weights(Vec4f result, f32 t, UNUSED s32 c) {
             break;
     }
 }
+#endif /* !TARGET_PSX: PS1 uses integer spline weights. */
 
 /**
  * Initialize a spline animation.
@@ -753,7 +763,11 @@ void spline_get_weights(Vec4f result, f32 t, UNUSED s32 c) {
  */
 void anim_spline_init(Vec4s *keyFrames) {
     gSplineKeyframe = keyFrames;
+#ifdef TARGET_PSX
+    gSplineKeyframeProgressMilli = 0;
+#else
     gSplineKeyframeFraction = 0;
+#endif
     gSplineState = 1;
 }
 
@@ -763,21 +777,41 @@ void anim_spline_init(Vec4s *keyFrames) {
  * Returns TRUE when the last point is reached, FALSE otherwise.
  */
 s32 anim_spline_poll(Vec3f result) {
+    s32 hasEnded = FALSE;
+#ifdef TARGET_PSX
+    int32_t weights[4];
+    int64_t resultq[3] = {0, 0, 0};
+    psx_spline_weights_q12(gSplineState, gSplineKeyframeProgressMilli, weights);
+    for (int i = 0; i < 4; i++) {
+        for (int axis = 0; axis < 3; axis++) {
+            resultq[axis] += (int64_t) weights[i] * gSplineKeyframe[i][axis + 1];
+        }
+    }
+    /* The camera still consumes Vec3f, so convert just the three outputs. */
+    for (int axis = 0; axis < 3; axis++) {
+        result[axis] = qtof((q32) resultq[axis]);
+    }
+    gSplineKeyframeProgressMilli += gSplineKeyframe[0][0];
+    s32 advance = gSplineKeyframeProgressMilli >= 1000;
+#else
     Vec4f weights;
     s32 i;
-    s32 hasEnded = FALSE;
-
-    for(int i = 0; i < 3; i++) result[i] = 0;
+    for(int axis = 0; axis < 3; axis++) result[axis] = 0;
     spline_get_weights(weights, gSplineKeyframeFraction, gSplineState);
     for (i = 0; i < 4; i++) {
         result[0] += weights[i] * gSplineKeyframe[i][1];
         result[1] += weights[i] * gSplineKeyframe[i][2];
         result[2] += weights[i] * gSplineKeyframe[i][3];
     }
-
-    if ((gSplineKeyframeFraction += gSplineKeyframe[0][0] / 1000.0f) >= 1) {
+    s32 advance = (gSplineKeyframeFraction += gSplineKeyframe[0][0] / 1000.0f) >= 1;
+#endif
+    if (advance) {
         gSplineKeyframe++;
+#ifdef TARGET_PSX
+        gSplineKeyframeProgressMilli -= 1000;
+#else
         gSplineKeyframeFraction--;
+#endif
         switch (gSplineState) {
             case CURVE_END_2:
                 hasEnded = TRUE;

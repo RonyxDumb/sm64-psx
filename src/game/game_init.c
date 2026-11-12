@@ -22,6 +22,9 @@
 #include <prevent_bss_reordering.h>
 #include <levels/scripts.h>
 #include <port/gfx/gfx.h>
+#ifdef TARGET_PSX
+#include <port/gfx/gfx_analog_fixed.h>
+#endif
 
 // First 3 controller slots
 struct Controller gControllers[3];
@@ -123,6 +126,14 @@ UNUSED static void record_demo(void) {
  * Take the updated controller struct and calculate the new x, y, and distance floats.
  */
 static void adjust_analog_stick(s8 raw_x, s8 raw_y, float* x, float* y, float* mag) {
+#ifdef TARGET_PSX
+    q32 xq, yq, magq;
+    psx_adjust_analog_q12(raw_x, raw_y, &xq, &yq, &magq);
+    /* Preserve the existing Controller ABI until callers are migrated. */
+    *x = qtof(xq);
+    *y = qtof(yq);
+    *mag = qtof(magq);
+#else
     UNUSED u8 pad[8];
 
     // Reset the controller's x and y floats.
@@ -159,6 +170,7 @@ static void adjust_analog_stick(s8 raw_x, s8 raw_y, float* x, float* y, float* m
         *y *= 64 / *mag;
         *mag = 64;
     }
+#endif
 }
 
 /**
