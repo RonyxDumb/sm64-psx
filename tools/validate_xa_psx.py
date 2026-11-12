@@ -8,7 +8,7 @@ import struct
 from interleave_xa import MISSING, SECTOR_INTERVAL, XA_SECTOR_SIZE, PADDING
 
 
-def validate(pack, info=None):
+def validate(pack, info=None, expect_tracks=None):
     bounds = list(struct.iter_unpack("<II", info.read_bytes())) if info else None
     counts = {}
     padding = 0
@@ -39,6 +39,8 @@ def validate(pack, info=None):
                 raise ValueError(f"track {track}: metadata length does not match pack")
     if not counts and not padding:
         raise ValueError("empty XA pack")
+    if expect_tracks is not None and set(counts) != set(range(expect_tracks)):
+        raise ValueError(f"expected {expect_tracks} tracks numbered from 0, found {sorted(counts)}")
     print(f"XA validated: {len(counts)} tracks, {sum(counts.values())} audio sectors, {padding} padding sectors")
 
 
@@ -46,8 +48,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("pack", type=Path)
     parser.add_argument("info", nargs="?", type=Path)
+    parser.add_argument("--expect-tracks", type=int)
     args = parser.parse_args()
     try:
-        validate(args.pack, args.info)
+        validate(args.pack, args.info, args.expect_tracks)
     except (OSError, ValueError, struct.error) as error:
         parser.exit(1, f"XA validation failed: {error}\n")

@@ -4,11 +4,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      kondo_soundtrack:
-        description: "Church of Kondo soundtrack"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -122,10 +117,6 @@ jobs:
           print("Source ROM validated (US, 8 MiB, correct SHA-1)")
           PY
 
-      - name: Prepare Church of Kondo soundtrack
-        if: inputs.kondo_soundtrack
-        run: python3 tools/import_kondo_soundtrack.py
-
       - name: Compile PlayStation ISO
         shell: bash
         run: |
@@ -147,7 +138,7 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" build/us_psx
           test -s build/us_psx/sm64.iso
           test -s build/us_psx/sm64.cue
-          python3 tools/validate_xa_psx.py build/us_psx/bgm/pack.xa build/us_psx/bgm/info.dat
+          python3 tools/validate_xa_psx.py build/us_psx/bgm/pack.xa build/us_psx/bgm/info.dat --expect-tracks 38
           grep -qi 'sm64.iso' build/us_psx/sm64.cue || \
             echo "::warning::Check the CUE file's track filename before opening it in the emulator"
           (cd build/us_psx && sha256sum sm64.iso sm64.cue > SHA256SUMS)

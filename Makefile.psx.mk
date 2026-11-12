@@ -386,8 +386,10 @@ $(ALL_TEX_HEADER_FILES):
 # Audio Generation                                                             #
 #==============================================================================#
 
-# background music
-BGM_TRACKS := $(foreach track,$(shell seq 0 37),$(if $(wildcard .local/$(track).wav),$(BUILD_DIR)/bgm/$(track).track.xa,-))
+# Use the bundled XA tracks unless a local WAV replaces that slot.
+BGM_TRACKS := $(strip $(foreach track,$(shell seq 0 37),\
+	$(if $(wildcard .local/$(track).wav),$(BUILD_DIR)/bgm/$(track).track.xa,\
+		$(or $(wildcard sound/bgm/$(track).xa),-))))
 BGM_TRACK_LIST := $(BUILD_DIR)/bgm/tracks.txt
 ifneq ($(BGM_TRACKS),$(file <$(BGM_TRACK_LIST)))
 $(shell mkdir -p $(dir $(BGM_TRACK_LIST)))
