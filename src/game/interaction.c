@@ -636,7 +636,10 @@ void push_mario_out_of_object(struct MarioState *m, struct Object *o, f32 paddin
         newMarioZq = QFIELD(o, oPosZ) + qmul(minDistanceq, cosqs(pushAngle));
 
 		q32 newMarioYq = q(m->pos[1]);
-        q32_find_wall_collision(&newMarioXq, &newMarioYq, &newMarioZq, 60.0f, 50.0f);
+        /* The collision API takes fixed-point q32 radii, not world-space floats.
+         * Passing 60/50 as raw q32 makes the wall test nearly zero-sized,
+         * allowing object separation to push Mario through nearby geometry. */
+        q32_find_wall_collision(&newMarioXq, &newMarioYq, &newMarioZq, q(60), q(50));
 		m->pos[1] = qtof(newMarioYq);
 
         find_floorq(newMarioXq, newMarioYq, newMarioZq, &floor);
