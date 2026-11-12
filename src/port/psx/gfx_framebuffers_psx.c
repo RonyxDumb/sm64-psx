@@ -77,7 +77,10 @@ void gfx_swap_buffers(bool vsync_30fps) {
 
 	/* selected_fb now points to the next draw buffer. Present the
 	 * previously submitted one at VBlank (or immediately for loader UI). */
-	GPU_GP1 = gp1_fbOffset(selected_fb? XRES: 0, 0);
+	/* selected_fb is now the NEXT draw target. Scan out the completed
+	 * buffer, not the one about to be cleared and rendered into. Showing
+	 * the draw target caused partial frames, flicker and visible tearing. */
+	GPU_GP1 = gp1_fbOffset(selected_fb ? 0 : XRES, 0);
 	if(vsync_30fps) {
 		GPU_GP1 = gp1_dispBlank(false);
 	}
