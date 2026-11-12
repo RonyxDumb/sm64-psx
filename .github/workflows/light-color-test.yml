@@ -31,6 +31,10 @@ jobs:
         run: |
           cc -std=c11 -Wall -Wextra -Werror -I. tests/psx_texture_modulation_test.c -o /tmp/psx_texture_modulation_test
           /tmp/psx_texture_modulation_test
+      - name: Validate PS1 directional lighting orientation
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -I. tests/psx_lighting_matrix_test.c -o /tmp/psx_lighting_matrix_test
+          /tmp/psx_lighting_matrix_test
       - name: Test GPU culling and flat shading without commercial assets
         run: |
           cc -std=c11 -Wall -Wextra -Werror -I. tests/psx_gpu_optimizations_test.c -o /tmp/psx_gpu_optimizations_test

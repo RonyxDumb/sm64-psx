@@ -4,6 +4,7 @@
 #include <port/gfx/gfx.h>
 #include <port/gfx/gfx_light_color.h>
 #include <port/gfx/gfx_texture_modulation.h>
+#include <port/gfx/gfx_psx_lighting_matrix.h>
 #include <port/gfx/gfx_gpu_optimizations.h>
 #include <ps1/registers.h>
 #include <port/gfx/gfx_internal.h>
@@ -605,43 +606,56 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 }
 
 [[gnu::noinline]] static void set_light(u32 normals, u32 rgb, u32 light_idx) {
-	gte_setDataReg(GTE_VXY0, (u32) ((s32) normals << 24 >> 8) >> 16 | (s32) (normals & 0xFF00) << 16 >> 8);
-	gte_setDataReg(GTE_VZ0, (s32) normals << 8 >> 24);
-	gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_NONE);
+    if(light_idx > 1) return;
 
-	u32 r = rgb << 4 & 0xFF0;
-	u32 g = rgb >> 4 & 0xFF0;
-	u32 b = rgb >> 12 & 0xFF0;
+    /* Decode every signed normal component separately: the former left
+     * shifts of signed packed bytes could also corrupt negative directions. */
+    gte_setV0((s8) (normals & 0xff), (s8) ((normals >> 8) & 0xff),
+              (s8) ((normals >> 16) & 0xff));
+    gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_NONE);
 
-	s16 nx = gte_getDataReg(GTE_IR1);
-	s16 ny = gte_getDataReg(GTE_IR2);
-	s16 nz = gte_getDataReg(GTE_IR3);
-	gte_commandNoNop(GTE_CMD_SQR);
-	u32 normal_len_sq = gte_getDataReg(GTE_MAC1) + gte_getDataReg(GTE_MAC2) + gte_getDataReg(GTE_MAC3);
-	if(normal_len_sq > 1) {
-		u32 normal_len = sqrtu(normal_len_sq);
-		s32 div = ONE * 128 / normal_len;
-		nx = nx * div / 128;
-		ny = ny * div / 128;
-		nz = nz * div / 128;
-	}
+    s32 nx = (s16) gte_getDataReg(GTE_IR1);
+    s32 ny = (s16) gte_getDataReg(GTE_IR2);
+    s32 nz = (s16) gte_getDataReg(GTE_IR3);
+    gte_commandNoNop(GTE_CMD_SQR);
+    u32 normal_len_sq = gte_getDataReg(GTE_MAC1) + gte_getDataReg(GTE_MAC2) + gte_getDataReg(GTE_MAC3);
+    if(normal_len_sq > 1) {
+        u32 normal_len = sqrtu(normal_len_sq);
+        if(normal_len != 0) {
+            s32 div = ONE * 128 / normal_len;
+            nx = nx * div / 128;
+            ny = ny * div / 128;
+            nz = nz * div / 128;
+        }
+    }
 
-	u32 l13l21bak = gte_getControlReg(GTE_L13L21);
-	if(light_idx == 0) {
-		gte_setControlReg(GTE_LC11LC12, r);
-		gte_setControlReg(GTE_LC13LC21, (gte_getControlReg(GTE_LC13LC21) & 0x0000FFFF) | g << 16);
-		gte_setControlReg(GTE_LC31LC32, b);
-		gte_setControlReg(GTE_L11L12, nx);
-		gte_setControlReg(GTE_L13L21, (l13l21bak & 0x0000FFFF) | ny << 16);
-		gte_setControlReg(GTE_L31L32, nz);
-	} else {
-		gte_setControlReg(GTE_LC13LC21, (gte_getControlReg(GTE_LC13LC21) & 0xFFFF0000) | r);
-		gte_setControlReg(GTE_LC22LC23, g << 16);
-		gte_setControlReg(GTE_LC33, b);
-		gte_setControlReg(GTE_L13L21, (l13l21bak & 0xFFFF0000) | nx);
-		gte_setControlReg(GTE_L22L23, ny << 16);
-		gte_setControlReg(GTE_L33, nz);
-	}
+    /* NCT multiplies LLM * vertex_normal, then LCM * light_intensity.
+     * Direction vectors therefore belong in LLM rows, whereas their
+     * RGB contributions belong in LCM columns (not matching columns). */
+    GfxPsxLightingMatrices m = {0};
+    m.light[1] = gte_getControlReg(GTE_L13L21);
+    m.color[0] = gte_getControlReg(GTE_LC11LC12);
+    m.color[3] = gte_getControlReg(GTE_LC31LC32);
+    if(light_idx == 0) {
+        m.color[1] = gte_getControlReg(GTE_LC13LC21);
+    } else {
+        m.color[2] = gte_getControlReg(GTE_LC22LC23);
+    }
+    gfx_psx_set_directional_light_matrix(&m, light_idx, nx, ny, nz, rgb);
+
+    if(light_idx == 0) {
+        gte_setControlReg(GTE_L11L12, m.light[0]);
+        gte_setControlReg(GTE_L13L21, m.light[1]);
+        gte_setControlReg(GTE_LC11LC12, m.color[0]);
+        gte_setControlReg(GTE_LC13LC21, m.color[1]);
+        gte_setControlReg(GTE_LC31LC32, m.color[3]);
+    } else {
+        gte_setControlReg(GTE_L13L21, m.light[1]);
+        gte_setControlReg(GTE_L22L23, m.light[2]);
+        gte_setControlReg(GTE_LC11LC12, m.color[0]);
+        gte_setControlReg(GTE_LC22LC23, m.color[2]);
+        gte_setControlReg(GTE_LC31LC32, m.color[3]);
+    }
 }
 
 [[gnu::flatten]] static void draw_square_shadow(s32 radius, u8 opacity) {
