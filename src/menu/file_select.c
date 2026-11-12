@@ -21,7 +21,11 @@
 #include "game/rumble_init.h"
 #include "sm64.h"
 #include "text_strings.h"
+#ifdef TARGET_PSX
+#include <port/gfx/gfx_internal.h>
+#else
 #include <port/gfx/gfx.h>
+#endif
 
 #include "eu_translation.h"
 #ifdef VERSION_EU
@@ -2995,6 +2999,12 @@ static void print_file_select_strings(void) {
  */
 Gfx *geo_file_select_strings_and_menu_cursor(s32 callContext, UNUSED struct GraphNode *node, UNUSED const ShortMatrix* mtxq) {
     if (callContext == GEO_CONTEXT_RENDER) {
+#ifdef TARGET_PSX
+        // The background lives behind the 3D cards in the ordering table.
+        // Its original 9x object scale overflows the GTE's 4.12 matrix.
+        TexHeader *wood = segmented_to_virtual(texture_menu_file);
+        gfx_draw_background_tile(wood, 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, 0x808080);
+#endif
         print_file_select_strings();
         print_menu_cursor();
     }

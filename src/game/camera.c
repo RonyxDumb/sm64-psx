@@ -2935,6 +2935,42 @@ void update_lakitu(struct Camera *c) {
 }
 
 
+#ifdef TARGET_PSX
+static u16 psx_camera_buttons(const struct Camera *c, u16 previous) {
+    // The default and Mario cameras already use the stick for smooth movement.
+    switch (c->mode) {
+        case CAMERA_MODE_CLOSE:
+        case CAMERA_MODE_FREE_ROAM:
+        case CAMERA_MODE_INSIDE_CANNON:
+            return 0;
+        case CAMERA_MODE_BEHIND_MARIO:
+        case CAMERA_MODE_C_UP:
+        case CAMERA_MODE_WATER_SURFACE:
+            break;
+        default:
+            if (sSelectionFlags & CAM_MODE_MARIO_ACTIVE) {
+                return 0;
+            }
+    }
+
+    s16 x = gPlayer1Controller->rawRightStickX;
+    s16 y = gPlayer1Controller->rawRightStickY;
+    // Release inside a smaller threshold so jitter cannot repeat a C press.
+    u16 buttons = 0;
+    if (x < -((previous & L_CBUTTONS) ? 32 : 48)) {
+        buttons |= L_CBUTTONS;
+    } else if (x > ((previous & R_CBUTTONS) ? 32 : 48)) {
+        buttons |= R_CBUTTONS;
+    }
+    if (y < -((previous & D_CBUTTONS) ? 32 : 48)) {
+        buttons |= D_CBUTTONS;
+    } else if (y > ((previous & U_CBUTTONS) ? 32 : 48)) {
+        buttons |= U_CBUTTONS;
+    }
+    return buttons;
+}
+#endif
+
 /**
  * The main camera update function.
  * Gets controller input, checks for cutscenes, handles mode changes, and moves the camera
@@ -2983,6 +3019,15 @@ void update_camera(struct Camera *c) {
     c->defMode = gLakituState.defMode;
 
     camera_course_processing(c);
+#ifdef TARGET_PSX
+    static u16 previousStickButtons;
+    u16 physicalPressed = gPlayer1Controller->buttonPressed;
+    u16 physicalDown = gPlayer1Controller->buttonDown;
+    u16 stickButtons = psx_camera_buttons(c, previousStickButtons);
+    gPlayer1Controller->buttonPressed |= stickButtons & ~(previousStickButtons | physicalDown);
+    gPlayer1Controller->buttonDown |= stickButtons;
+    previousStickButtons = stickButtons;
+#endif
     sCButtonsPressed = find_c_buttons_pressed(sCButtonsPressed, gPlayer1Controller->buttonPressed,
                                               gPlayer1Controller->buttonDown);
 
@@ -3125,6 +3170,10 @@ void update_camera(struct Camera *c) {
     update_lakitu(c);
 
     gLakituState.lastFrameAction = sMarioCamState->action;
+#ifdef TARGET_PSX
+    gPlayer1Controller->buttonPressed = physicalPressed;
+    gPlayer1Controller->buttonDown = physicalDown;
+#endif
 }
 
 /**

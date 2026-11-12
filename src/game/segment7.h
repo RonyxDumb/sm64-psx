@@ -13,6 +13,7 @@ extern u8 dl_menu_ia8_text_begin[];
 extern u8 dl_menu_ia8_text_end[];
 extern u8 dl_menu_rgba16_wood_course[];
 #ifdef TARGET_PSX
+extern const u8 texture_menu_file[];
 extern const u8 texture_menu_course_upper[];
 extern const u8 texture_menu_course_lower[];
 #ifdef VERSION_EU

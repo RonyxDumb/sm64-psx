@@ -226,7 +226,7 @@ TEXTCONV              := $(TOOLS_DIR)/build/textconv
 #AIFF_EXTRACT_CODEBOOK := $(TOOLS_DIR)/build/aiff_extract_codebook
 #VADPCM_ENC            := $(TOOLS_DIR)/build/vadpcm_enc
 EXTRACT_DATA_FOR_MIO  := $(TOOLS_DIR)/build/extract_data_for_mio
-SKYCONV               := $(TOOLS_DIR)/build/skyconv
+SKYCONV               := $(TOOLS_DIR)/build/skyconv_psx
 PRINT = printf
 
 ifeq ($(COLOR),1)
@@ -345,13 +345,34 @@ $(SKYBOX_META): $(BUILD_DIR)/tex_pack $(SKYBOX_MANIFEST) $(SKYBOX_TOOL)
 >	$(V)$(PYTHON) $(SKYBOX_TOOL) emit-bin $(SKYBOX_MANIFEST) $(SKYBOX_DIR)/tiles $@.tmp
 >	$(V)mv $@.tmp $@
 
-$(BUILD_DIR)/tex_pack: $(ALL_FULLDATAS) $(SKYBOX_PAYLOADS) tools/pack_textures.py
+ifneq ($(BENCH),1)
+CAKE_TILE_DIR := $(BUILD_DIR)/levels/ending/psx_tiles
+CAKE_TILE_NUMBERS := $(shell seq 0 39)
+CAKE_PAYLOADS := $(addprefix $(CAKE_TILE_DIR)/,$(addsuffix .fulldata,$(CAKE_TILE_NUMBERS)))
+CAKE_INC_C := $(BUILD_DIR)/levels/ending/psx_cake.inc.c
+
+$(addprefix $(CAKE_TILE_DIR)/,$(addsuffix .png,$(CAKE_TILE_NUMBERS))) &: levels/ending/cake.png $(SKYCONV)
+>	$(V)mkdir -p $(CAKE_TILE_DIR)
+>	$(V)$(SKYCONV) --split-psx-cake $< $(CAKE_TILE_DIR)
+
+$(CAKE_PAYLOADS): $(CAKE_TILE_DIR)/%.fulldata: $(CAKE_TILE_DIR)/%.png tools/build/convert_image_psx
+>	$(V)tools/build/convert_image_psx 4 $< $@
+
+$(CAKE_INC_C): $(BUILD_DIR)/tex_pack
+>	$(V){ printf 'ALIGNED4 Texture psx_cake_tiles[] = {\n'; \
+>		for tile in $(CAKE_PAYLOADS:.fulldata=.texheader); do hexdump -v -e '1/1 "0x%X,"' "$$tile"; printf '\n'; done; \
+>		printf '};\n'; } > $@.tmp
+>	$(V)mv $@.tmp $@
+endif
+
+$(BUILD_DIR)/tex_pack: $(ALL_FULLDATAS) $(SKYBOX_PAYLOADS) $(CAKE_PAYLOADS) tools/pack_textures.py
 >	@$(PRINT) "$(GREEN)Packing all images$(NO_COL)\n"
 >	$(V)rm -f $(BUILD_DIR)/fulldata_list.txt
 >	$(V)for fulldata in $(ALL_FULLDATAS); do \
 >		echo $$fulldata >> $(BUILD_DIR)/fulldata_list.txt ;\
 >	done
 >	$(V)cat $(SKYBOX_PAYLOADS) >> $(BUILD_DIR)/fulldata_list.txt
+>	$(V)for tile in $(CAKE_PAYLOADS); do echo "$$tile" >> $(BUILD_DIR)/fulldata_list.txt; done
 >	$(V)$(PYTHON) tools/pack_textures.py $@.tmp $(BUILD_DIR)/fulldata_list.txt
 >	$(V)for png in $(ALL_PNGS); do \
 >		hexdump -v -e '1/1 "0x%X,"' $(BUILD_DIR)/$${png%.png}.texheader > $(BUILD_DIR)/$${png%.png}.inc.c ;\
@@ -359,12 +380,6 @@ $(BUILD_DIR)/tex_pack: $(ALL_FULLDATAS) $(SKYBOX_PAYLOADS) tools/pack_textures.p
 >	$(V)mv $@.tmp $@
 
 ALL_TEX_HEADER_FILES := $(ALL_PNGS:%.png=$(BUILD_DIR)/%.inc.c)
-ifeq ($(BENCH),1)
-	CAKE_INC_C :=
-else
-	CAKE_INC_C := $(if $(filter eu,$(VERSION)),$(BUILD_DIR)/levels/ending/cake_eu.inc.c,$(BUILD_DIR)/levels/ending/cake.inc.c)
-endif
-
 $(ALL_TEX_HEADER_FILES):
 
 #==============================================================================#
@@ -372,24 +387,19 @@ $(ALL_TEX_HEADER_FILES):
 #==============================================================================#
 
 # background music
-BGM_TRACKS := 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37
-
-ifeq ($(wildcard .local/0.wav),)
-	$(warning music not found!)
-	BGM_TRACKS := $(foreach track,$(BGM_TRACKS),dummy$(track))
+BGM_TRACKS := $(foreach track,$(shell seq 0 37),$(if $(wildcard .local/$(track).wav),$(BUILD_DIR)/bgm/$(track).track.xa,-))
+BGM_TRACK_LIST := $(BUILD_DIR)/bgm/tracks.txt
+ifneq ($(BGM_TRACKS),$(file <$(BGM_TRACK_LIST)))
+$(shell mkdir -p $(dir $(BGM_TRACK_LIST)))
+$(file >$(BGM_TRACK_LIST),$(BGM_TRACKS))
 endif
-
-$(BUILD_DIR)/bgm/dummy%.track.xa: empty.wav $(PSXAVENC)
->	$(V)mkdir -p $(dir $@)
->	$(V)$(PSXAVENC) -t xa -f 37800 -b 8 -c 2 -F $(*:track=) -C 0 $< $@
 
 $(BUILD_DIR)/bgm/%.track.xa: .local/%.wav $(PSXAVENC)
 >	$(V)mkdir -p $(dir $@)
 >	$(V)$(PSXAVENC) -t xa -f 37800 -b 8 -c 2 -F $(*:track=) -C 0 $< $@
 
-$(BUILD_DIR)/bgm/pack.xa: $(TOOLS_DIR)/interleave_xa.py $(foreach track,$(BGM_TRACKS),$(BUILD_DIR)/bgm/$(track).track.xa)
->	$(V)mkdir -p $(dir $@)
->	$(V)$(PYTHON) $(TOOLS_DIR)/interleave_xa.py $(BUILD_DIR)/bgm/info.dat $(BUILD_DIR)/bgm/pack.xa $(filter-out %.py,$^)
+$(BUILD_DIR)/bgm/pack.xa $(BUILD_DIR)/bgm/info.dat &: $(TOOLS_DIR)/interleave_xa.py $(BGM_TRACK_LIST) $(filter-out -,$(BGM_TRACKS))
+>	$(V)$(PYTHON) $(TOOLS_DIR)/interleave_xa.py $(BUILD_DIR)/bgm/info.dat $(BUILD_DIR)/bgm/pack.xa $(BGM_TRACKS)
 
 # Sound files
 SOUND_BANK_FILES    := $(wildcard sound/sound_banks/*.json)
@@ -690,7 +700,7 @@ tags: $(C_FILES)
 $(BUILD_DIR)/psx_iso.xml: psx_iso.xml
 >	$(V)cp $< $@
 
-$(ISO_OUT) $(CUE_OUT) &: $(EXE) $(BUILD_DIR)/bgm/pack.xa $(BUILD_DIR)/psx_iso.xml system.cnf
+$(ISO_OUT) $(CUE_OUT) &: $(EXE) $(BUILD_DIR)/bgm/pack.xa $(BUILD_DIR)/bgm/info.dat $(BUILD_DIR)/psx_iso.xml system.cnf
 >	@$(PRINT) "$(GREEN)Making iso file: $(BLUE)$@$(NO_COL)\n"
 >	$(V)cd $(BUILD_DIR) && ../../$(MKPSXISO) -y ./psx_iso.xml
 

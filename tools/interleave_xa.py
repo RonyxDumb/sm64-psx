@@ -35,13 +35,16 @@ class Input:
 	def is_finished(self):
 		return self.off >= len(self.data)
 
-all_inputs: list[Input] = []
+all_inputs: list[Input | None] = []
 
 for path in sys.argv[3:]:
-	with open(path, "rb") as input:
-		all_inputs.append(Input(input.read()))
+	if path == "-":
+		all_inputs.append(None)
+	else:
+		with open(path, "rb") as input:
+			all_inputs.append(Input(input.read()))
 
-remaining_inputs = all_inputs.copy()
+remaining_inputs = [inp for inp in all_inputs if inp is not None]
 
 while True:
 	for inp in remaining_inputs:
@@ -69,8 +72,11 @@ while True:
 
 with open(sys.argv[1], "wb") as out_info:
 	for inp in all_inputs:
-		assert inp.start_lba_off != -1 and inp.end_lba_off != -1
-		out_info.write(struct.pack("<II", inp.start_lba_off, inp.end_lba_off))
+		if inp is None:
+			out_info.write(struct.pack("<II", 0xFFFFFFFF, 0xFFFFFFFF))
+		else:
+			assert inp.start_lba_off != -1 and inp.end_lba_off != -1
+			out_info.write(struct.pack("<II", inp.start_lba_off, inp.end_lba_off))
 
 with open(sys.argv[2], "wb") as out_pack:
-	out_pack.write(out_pack_bytes)
+	out_pack.write(out_pack_bytes or padding_sector)

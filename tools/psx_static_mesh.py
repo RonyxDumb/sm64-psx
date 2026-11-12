@@ -18,9 +18,9 @@ IGNORED = {
     "gsDPSetFogColor", "gsSPFogPosition", "gsSPFogFactor", "gsDPSetTextureFilter",
     "gsDPSetTexturePersp", "gsDPSetTextureLOD", "gsDPSetPrimColor", "gsSPNoOp",
 }
-# Prefer finer build-time tessellation, but never exceed the original overlay
-# allocation: compile_mesh backs off until native_size <= old_size.
-WORLD_EDGE_LIMITS = (512, 768, 1024, 2048, 4096, 8192, 32768)
+# Try the finest affordable textured mesh first. The final pass only splits
+# edges required by the GPU's UV range, so dense meshes can still run natively.
+WORLD_EDGE_LIMITS = (320, 448, 640, 896, 1280, 2048, 4096, None)
 VERTICES_PER_BATCH = 256
 
 
@@ -297,49 +297,76 @@ def compile_list(root, lists, batches, lights, textures, combiners):
     return [(op("STATIC_MESH", str(len(texture_symbols))), *(pointer(t) for t in texture_symbols)), *events]
 
 
-def split_triangle(triangle, split_edges, world_edge):
+def face_area_sq(a, b, c):
+    abx, aby, abz = (y - x for x, y in zip(a.xyz, b.xyz))
+    acx, acy, acz = (y - x for x, y in zip(a.xyz, c.xyz))
+    return (aby * acz - abz * acy) ** 2 + (abz * acx - abx * acz) ** 2 + (abx * acy - aby * acx) ** 2
+
+
+def split_triangle(triangle, split_edges, world_edge_sq):
     points = triangle.vertices
-    longest = None
-    largest = 1
+    area_sq = face_area_sq(*points)
+    if not area_sq:
+        return
+    textured = "PRIM_FLAG_TEXTURED" in triangle.flags and len({v.uv for v in points}) > 1
+    best = None
+    best_midpoint = None
     for index, a in enumerate(points):
         b = points[(index + 1) % 3]
-        if a.xyz == b.xyz:
-            continue
         edge = tuple(sorted((a.xyz, b.xyz)))
-        world = sum((x - y) ** 2 for x, y in zip(a.xyz, b.xyz))
-        uv = max(((max(x, y) - min(x, y) // period * period) / 255
-                  for x, y, period in zip(a.uv, b.uv, triangle.repeat) if period), default=0)
-        severity = max(world / (world_edge ** 2), uv, 2 if edge in split_edges else 0)
-        if severity > largest:
-            largest = severity
-            longest = index, edge
+        length_sq = sum((x - y) ** 2 for x, y in zip(a.xyz, b.xyz))
+        uv_span = max((max(x, y) - min(x, y) // period * period
+                       for x, y, period in zip(a.uv, b.uv, triangle.repeat) if period), default=0)
+        if edge in split_edges:
+            priority = 3
+        elif uv_span > 255:
+            priority = 2
+        elif textured and world_edge_sq is not None and length_sq > world_edge_sq:
+            priority = 1
+        else:
+            continue
+        candidate = priority, length_sq, edge, index
+        if best is not None and candidate <= best:
+            continue
+        midpoint = a.midpoint(b)
+        c = points[(index + 2) % 3]
+        # Rounding a very thin face to integer coordinates can leave one
+        # child as large as its parent. Require each split to make progress.
+        if (0 < face_area_sq(a, midpoint, c) < area_sq
+                and 0 < face_area_sq(midpoint, b, c) < area_sq):
+            best = candidate
+            best_midpoint = midpoint
 
-    if longest is None:
+    if best is None:
         yield triangle
         return
 
-    index, edge = longest
+    _, _, edge, index = best
     a, b, c = points[index:] + points[:index]
-    midpoint = a.midpoint(b)
-    if midpoint.xyz in (a.xyz, b.xyz):
-        yield triangle
-        return
     split_edges.add(edge)
-    for child in ((a, midpoint, c), (midpoint, b, c)):
-        yield from split_triangle(Triangle(child, triangle.repeat, triangle.flags), split_edges, world_edge)
+    for child in ((a, best_midpoint, c), (best_midpoint, b, c)):
+        yield from split_triangle(Triangle(child, triangle.repeat, triangle.flags), split_edges, world_edge_sq)
 
 
-def tessellate(lists, world_edge):
+def tessellate(lists, world_edge, max_triangles=None):
+    world_edge_sq = None if world_edge is None else world_edge ** 2
     split_edges = set()
     previous_count = -1
     while len(split_edges) != previous_count:
         previous_count = len(split_edges)
-        result = {
-            name: [piece for item in events
-                   for piece in (split_triangle(item, split_edges, world_edge)
-                                 if isinstance(item, Triangle) else (item,))]
-            for name, events in lists.items()
-        }
+        result = {}
+        triangle_count = 0
+        for name, events in lists.items():
+            pieces = result[name] = []
+            for item in events:
+                if not isinstance(item, Triangle):
+                    pieces.append(item)
+                    continue
+                for triangle in split_triangle(item, split_edges, world_edge_sq):
+                    triangle_count += 1
+                    if max_triangles is not None and triangle_count > max_triangles:
+                        return None
+                    pieces.append(triangle)
     return result
 
 
@@ -435,8 +462,12 @@ def compile_mesh(source, textures, combiners, defines=(), shared_lights=None):
     old_size = sum(len(rows) * 16 for rows in batches.values())
     old_size += sum(48 if name == "gsDPLoadTextureBlock" else 8
                     for items in lists.values() for name, _ in items)
+    native_size = 0
     for edge_limit in WORLD_EDGE_LIMITS:
-        result = tessellate(programs, edge_limit)
+        # Every triangle needs at least one command word, before vertices.
+        result = tessellate(programs, edge_limit, old_size // 4)
+        if result is None:
+            continue
         output = ['#include <port/gfx/gfx_internal.h>\n#include <port/gfx/gfx_light_color.h>\n', remainder]
         native_size = 0
         for a in roots:

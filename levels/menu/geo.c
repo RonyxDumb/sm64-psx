@@ -18,15 +18,18 @@
 #ifdef TARGET_PSX
 // Match the original cursor hit boxes and star positions with the GTE focal approximation.
 #define MENU_CAMERA_FOV 38
+// An exact 8.0 wraps the signed 4.12 scale matrix to -8.0 on PS1.
+#define MENU_BUTTON_SCALE 524272
 #else
 #define MENU_CAMERA_FOV 45
+#define MENU_BUTTON_SCALE 524288
 #endif
 
 // 0x0E0001D0
 const GeoLayout geo_menu_mario_save_button[] = {
    GEO_NODE_START(),
    GEO_OPEN_NODE(),
-      GEO_SCALE(0x00, 524288),
+      GEO_SCALE(0x00, MENU_BUTTON_SCALE),
       GEO_OPEN_NODE(),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_mario_save_button_base),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_save_button_back),
@@ -39,7 +42,7 @@ const GeoLayout geo_menu_mario_save_button[] = {
 const GeoLayout geo_menu_mario_save_button_fade[] = {
    GEO_NODE_START(),
    GEO_OPEN_NODE(),
-      GEO_SCALE(0x00, 524288),
+      GEO_SCALE(0x00, MENU_BUTTON_SCALE),
       GEO_OPEN_NODE(),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_mario_save_button_base),
 #ifndef TARGET_PSX
@@ -55,7 +58,7 @@ const GeoLayout geo_menu_mario_save_button_fade[] = {
 const GeoLayout geo_menu_mario_new_button[] = {
    GEO_NODE_START(),
    GEO_OPEN_NODE(),
-      GEO_SCALE(0x00, 524288),
+      GEO_SCALE(0x00, MENU_BUTTON_SCALE),
       GEO_OPEN_NODE(),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_mario_new_button_base),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_save_button_back),
@@ -68,7 +71,7 @@ const GeoLayout geo_menu_mario_new_button[] = {
 const GeoLayout geo_menu_mario_new_button_fade[] = {
    GEO_NODE_START(),
    GEO_OPEN_NODE(),
-      GEO_SCALE(0x00, 524288),
+      GEO_SCALE(0x00, MENU_BUTTON_SCALE),
       GEO_OPEN_NODE(),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_mario_new_button_base),
 #ifndef TARGET_PSX
@@ -83,7 +86,7 @@ const GeoLayout geo_menu_mario_new_button_fade[] = {
 const GeoLayout geo_menu_erase_button[] = {
    GEO_NODE_START(),
    GEO_OPEN_NODE(),
-      GEO_SCALE(0x00, 524288),
+      GEO_SCALE(0x00, MENU_BUTTON_SCALE),
       GEO_OPEN_NODE(),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_erase_button),
       GEO_CLOSE_NODE(),
@@ -95,7 +98,7 @@ const GeoLayout geo_menu_erase_button[] = {
 const GeoLayout geo_menu_copy_button[] = {
    GEO_NODE_START(),
    GEO_OPEN_NODE(),
-      GEO_SCALE(0x00, 524288),
+      GEO_SCALE(0x00, MENU_BUTTON_SCALE),
       GEO_OPEN_NODE(),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_copy_button),
       GEO_CLOSE_NODE(),
@@ -107,7 +110,7 @@ const GeoLayout geo_menu_copy_button[] = {
 const GeoLayout geo_menu_file_button[] = {
    GEO_NODE_START(),
    GEO_OPEN_NODE(),
-      GEO_SCALE(0x00, 524288),
+      GEO_SCALE(0x00, MENU_BUTTON_SCALE),
       GEO_OPEN_NODE(),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_file_button),
       GEO_CLOSE_NODE(),
@@ -119,7 +122,7 @@ const GeoLayout geo_menu_file_button[] = {
 const GeoLayout geo_menu_score_button[] = {
    GEO_NODE_START(),
    GEO_OPEN_NODE(),
-      GEO_SCALE(0x00, 524288),
+      GEO_SCALE(0x00, MENU_BUTTON_SCALE),
       GEO_OPEN_NODE(),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_score_button),
       GEO_CLOSE_NODE(),
@@ -131,7 +134,7 @@ const GeoLayout geo_menu_score_button[] = {
 const GeoLayout geo_menu_sound_button[] = {
    GEO_NODE_START(),
    GEO_OPEN_NODE(),
-      GEO_SCALE(0x00, 524288),
+      GEO_SCALE(0x00, MENU_BUTTON_SCALE),
       GEO_OPEN_NODE(),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_sound_button),
       GEO_CLOSE_NODE(),
@@ -143,7 +146,7 @@ const GeoLayout geo_menu_sound_button[] = {
 const GeoLayout geo_menu_generic_button[] = {
    GEO_NODE_START(),
    GEO_OPEN_NODE(),
-      GEO_SCALE(0x00, 524288),
+      GEO_SCALE(0x00, MENU_BUTTON_SCALE),
       GEO_OPEN_NODE(),
          GEO_DISPLAY_LIST(LAYER_OPAQUE, dl_menu_generic_button),
       GEO_CLOSE_NODE(),

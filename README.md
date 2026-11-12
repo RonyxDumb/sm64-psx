@@ -4,7 +4,6 @@
 
 - This is a fork of [the full decompilation of Super Mario 64 (J), (U), (E), and (SH)](https://github.com/n64decomp/sm64).
 - It is heavily modified and can no longer target Nintendo 64, only PSX and PC (for debugging).
-- There are still many limitations.
 - For now, it can only build from the US version.
 
 This repo does not include all assets necessary for compiling the game.
@@ -17,32 +16,29 @@ An original copy of the game is required to extract the assets.
 - Low-precision soft float implementation specially written for PSX to reduce the performance impact of floats
 - Large amounts of code have been adapted to use fixed point math, including the 16-bit integer vectors and matrices that are standard on PSX
 - Simplified rewritten render graph walker
-- Tessellation (up to 2x) to reduce issues with large polygons
-- RSP display lists are compiled just-in-time into a custom display list format that is more compact and faster to process
-- Display list preprocessor that removes commands we won't use and optimizes meshes (TODO: make it fix more things)
+- Static level meshes are compiled into PS1 draw lists where they fit the original overlay allocation. The compiler splits large textured faces and propagates splits across shared edges.
+- Dynamic and unsupported display lists use the runtime compiler. The GTE projects the vertices and the GPU draws packets in ordering-table order.
 - Mario's animations are compressed (from 580632 to 190324 bytes) and placed in a corner of VRAM rather than being loaded from storage (we don't have the luxury of a fast cartridge to read from in the middle of a frame)
 - Custom profiler
 - Custom texture encoder that quantizes all textures to 4 bits per pixel
 - Translucent texture shadows replaced with subtractive hexagonal shadows, as the PSX doesn't support arbitrary translucency
-- (WIP) Camera system adapted to rotate with the right analog stick
+- The right stick pans the free camera and supplies C-button input in the original stepped camera modes.
 - (WIP) Simplified rewritten Goddard subsystem
 
-## Known issues
+## PlayStation controls and saves
 
-- Some of Mario's animations do not play, and may even crash the game
-- Music cannot be generated at build time without manually obtaining the tracks
-- Sound effects work but sometimes sound odd or are missing notes
-- The camera cannot be controlled in many levels due to the unfinished camera control implementation
-- Crashes when entering certain levels (due to insufficient memory?)
-- Ending sequence crashes on load
-- When reaching the bridge in the castle grounds, Mario looks up but Lakitu never comes over (you need to do the Lakitu skip)
-- Poles do not go down when pounded
-- Textures are loaded individually, causing long stutters and loading times
-- Stretched textures due to PSX limitations (the graphics preprocessor could help)
-- Tessellation is not good enough to fix all large polygons (the graphics preprocessor could help)
-- Some textures are rendered incorrectly (RSP JIT issues?)
-- Title screen is unfinished
-- Pause menu doesn't work
+Mario D starts with 120 stars, the cap switches, the castle doors and the cannons unlocked. The port seeds this progress into an empty D slot at boot. Save changes are currently session-only because the memory card backend is still a stub.
+
+Hold L1 while pressing Start on the title screen to open the level test menu. It uses Mario D and act 6.
+
+## Remaining issues
+
+- The soundtrack still requires WAV inputs. Sound effects can differ from the original in pitch, timing or missing notes.
+- Some animations, scripted camera shots and the first-visit Lakitu cutscene still need gameplay validation. The interactive Mario head is unfinished.
+- Level starts, the pause menu and the final cake screen can be tested on a 2 MiB emulator. The complete run through every area, cutscene and credits entry still needs regression coverage.
+- Some faces still exhibit affine distortion, sorting errors or visible seams. Texture uploads can still pause gameplay when an asset first enters VRAM.
+
+The [Psy-Q run-time overview](https://psx.arthus.net/sdk/Psy-Q/DOCS/LibOver47.pdf) and [PSX-SPX GPU documentation](https://psx-spx.consoledev.net/dev/ps1/gpu/misc/) describe the affine texture interpolation that motivates build-time subdivision.
 
 ### GitHub Actions: build images for the PlayStation emulator
 
@@ -94,7 +90,7 @@ build directory.
 ## Building
 
 1. Place a *Super Mario 64* ROM named exactly `baserom.us.z64` into the repository's root directory. For now, only US ROMs are supported.
-2. (Optional) Create a folder named `.local` in the root of the repo and place every track of the soundtrack in it as a .wav file, numbered from 0 to 37 (0.wav, 1.wav, etc). See [here](https://codeberg.org/malucart/sm64-psx/issues/14#issuecomment-20591789) for the full track list. Don't worry too much about this step, you can just skip it and play without background music. One day this will be done automatically, but it will take some work, so it's low priority.
+2. (Optional) Place WAV tracks numbered `0.wav` through `37.wav` in `.local`. Missing tracks are silent and require no XA streaming. See the [track list](https://codeberg.org/malucart/sm64-psx/issues/14#issuecomment-20591789).
 3. Now you need a properly set up build environment. A Dockerfile is provided to simplify this. To use it, ensure you have [Docker](https://www.docker.com) (or a compatible alternative) installed and set up. (if on Linux, don't forget to put it in [rootless mode](https://docs.docker.com/engine/security/rootless/) as well!)
 	- If on Linux, I've included a convenience script for invoking a container from a terminal. Run `./idc` to enter a Bash shell in the container, or `./idc <command>` to run one command in it (for example, `./idc make` or `./idc make clean`). If this works for you, go to step 4.
 	- If using Zed (any OS), containers are supported right away. Open the repo, press Ctrl+Shift+P, and run the "projects: open dev container" action. The editor will act like it's running inside the container, including the terminal. Open the terminal panel in Zed and go to step 4.

@@ -10,6 +10,7 @@
 #include <ps1/gpu.h>
 #include <port/psx/cd_psx.h>
 #include <audio/external.h>
+#include <seq_ids.h>
 #include <sounds.h>
 #include <assert.h>
 
@@ -93,6 +94,7 @@ typedef struct {
 	MinSecFrame alignas(u32) end_msf;
 } BgmInfo;
 static BgmInfo bgm_info[256];
+#define XA_MISSING_TRACK 0xFFFFFFFFu
 #endif
 
 static void sfx_init_extdat_blob(void) {
@@ -205,6 +207,7 @@ void audio_backend_init() {
 	psx_cd_do_read((u8*) bgm_info, bgm_info_lba, 1, NULL);
 	u32 bgm_pack_lba = psx_cd_find_file_lba("BGMPACK.XA;1");
 	for(int i = 0; i < 40; i++) {
+		if(bgm_info[i].start_msf.as_u32 == XA_MISSING_TRACK) continue;
 		bgm_info[i].start_msf = lba_to_msf(bgm_pack_lba + bgm_info[i].start_msf.as_u32);
 		bgm_info[i].end_msf = lba_to_msf(bgm_pack_lba + bgm_info[i].end_msf.as_u32);
 	}
@@ -928,8 +931,10 @@ static u8 xa_position_poll_countdown;
 void play_music(UNUSED u8 player, UNUSED u16 seqArgs, UNUSED u16 fadeTimer) {
 #if !defined(SERIAL) && !defined(BENCH)
 	if((seqArgs >> 8) == SEQ_PLAYER_LEVEL) {
-		u8 track = track_mapping[seqArgs & 0xFF];
-		if(track == 0) {
+		u8 seq = seqArgs & SEQ_BASE_ID;
+		if(seq >= ARRAY_COUNT(track_mapping)) return;
+		u8 track = track_mapping[seq];
+		if(track == 0 || bgm_info[track - 2].start_msf.as_u32 == XA_MISSING_TRACK) {
 			if(cd_playing_audio) {
 				psx_cd_run_cmd(CDROM_STOP, NULL, 0, NULL, 0);
 				cd_playing_audio = false;

@@ -487,17 +487,18 @@ void bhv_wooden_post_update(void) {
             cur_obj_play_sound_2(SOUND_GENERAL_POUND_WOOD_POST);
             QSETFIELD(o,  oWoodenPostSpeedY, q(-70));
         }
-    } else if (APPROACH_F32_FIELD(o, oWoodenPostSpeedY, 0.0f, 25.0f)) {
-        // Stay still until mario is done ground pounding
-        o->oWoodenPostMarioPounding = cur_obj_is_mario_ground_pounding_platform();
-    } else if (QMODFIELD(o, oWoodenPostOffsetY, += FFIELD(o, oWoodenPostSpeedY)) < q(-190)) {
-        // Once pounded, if this is the chain chomp's post, release the chain
-        // chomp
-        QSETFIELD(o,  oWoodenPostOffsetY, q(-190));
-        if (o->parentObj != o) {
-            play_puzzle_jingle();
-            o->parentObj->oChainChompReleaseStatus = CHAIN_CHOMP_RELEASED_TRIGGER_CUTSCENE;
-            o->parentObj = o;
+    } else {
+        q32 speed = approach_q32_symmetric(QFIELD(o, oWoodenPostSpeedY), q(0), q(25));
+        QSETFIELD(o, oWoodenPostSpeedY, speed);
+        if (speed == 0) {
+            o->oWoodenPostMarioPounding = cur_obj_is_mario_ground_pounding_platform();
+        } else if (QMODFIELD(o, oWoodenPostOffsetY, += speed) < q(-190)) {
+            QSETFIELD(o, oWoodenPostOffsetY, q(-190));
+            if (o->parentObj != o) {
+                play_puzzle_jingle();
+                o->parentObj->oChainChompReleaseStatus = CHAIN_CHOMP_RELEASED_TRIGGER_CUTSCENE;
+                o->parentObj = o;
+            }
         }
     }
 

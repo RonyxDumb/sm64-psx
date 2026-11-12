@@ -6,6 +6,9 @@
 
 #include "make_const_nonconst.h"
 
+#ifdef TARGET_PSX
+#include "levels/ending/psx_cake.inc.c"
+#else
 #ifdef VERSION_EU
 #include "levels/ending/cake_eu.inc.c"
 
@@ -838,4 +841,5 @@ const Gfx dl_cake_end_screen[] = {
     gsDPSetRenderMode(G_RM_AA_ZB_OPA_SURF, G_RM_AA_ZB_OPA_SURF2),
     gsSPEndDisplayList(),
 };
+#endif
 #endif

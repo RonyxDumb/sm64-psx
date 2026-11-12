@@ -17,7 +17,7 @@ endif
 
 CFLAGS       := -I. -Iinclude -Wall -Wextra -Wno-unused-parameter -pedantic -O3 -march=native -s -g
 LDFLAGS      := -lm -lstdc++
-ALL_PROGRAMS := textconv aifc_decode aiff_extract_codebook tabledesign extract_data_for_mio skyconv makextfiles compress_mario_anims psx_sample_gen convert_image_psx n64graphics mio0
+ALL_PROGRAMS := textconv aifc_decode aiff_extract_codebook tabledesign extract_data_for_mio skyconv skyconv_psx makextfiles compress_mario_anims psx_sample_gen convert_image_psx n64graphics mio0
 LIBAUDIOFILE := audiofile/libaudiofile.a
 
 BUILD_PROGRAMS := $(ALL_PROGRAMS:%=build/%)
@@ -64,6 +64,7 @@ build/tabledesign_LDFLAGS := -Laudiofile -laudiofile -lstdc++
 build/extract_data_for_mio_SOURCES := extract_data_for_mio.c
 
 build/skyconv_SOURCES := skyconv.c n64graphics.c utils.c
+build/skyconv_psx_SOURCES := $(build/skyconv_SOURCES)
 
 build/psxavenc:
 	@mkdir -p build

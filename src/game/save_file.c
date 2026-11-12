@@ -44,11 +44,11 @@ s8 gLevelToCourseNumTable[] = {
 STATIC_ASSERT(ARRAY_COUNT(gLevelToCourseNumTable) == LEVEL_COUNT - 1,
               "change this array if you are adding levels");
 
-// This was probably used to set progress to 100% for debugging, but
-// it was removed from the release ROM.
+#ifndef TARGET_PSX
 static void stub_save_file_1(void) {
     UNUSED s32 pad;
 }
+#endif
 
 /**
  * Read from EEPROM to a given address.
@@ -276,6 +276,52 @@ BAD_RETURN(s32) save_file_copy(s32 srcFileIndex, s32 destFileIndex) {
     save_file_do_save(destFileIndex);
 }
 
+#ifdef TARGET_PSX
+static void seed_complete_file_d(void) {
+    if (save_file_exists(SAVE_FILE_D)) {
+        return;
+    }
+
+    struct SaveFile *file = &gSaveBuffer.files[SAVE_FILE_D][0];
+    file->flags = SAVE_FLAG_FILE_EXISTS | SAVE_FLAG_HAVE_WING_CAP | SAVE_FLAG_HAVE_METAL_CAP
+                  | SAVE_FLAG_HAVE_VANISH_CAP | SAVE_FLAG_UNLOCKED_BASEMENT_DOOR
+                  | SAVE_FLAG_UNLOCKED_UPSTAIRS_DOOR | SAVE_FLAG_MOAT_DRAINED
+                  | SAVE_FLAG_UNLOCKED_PSS_DOOR | SAVE_FLAG_UNLOCKED_WF_DOOR
+                  | SAVE_FLAG_UNLOCKED_CCM_DOOR | SAVE_FLAG_UNLOCKED_JRB_DOOR
+                  | SAVE_FLAG_UNLOCKED_BITDW_DOOR | SAVE_FLAG_UNLOCKED_BITFS_DOOR
+                  | SAVE_FLAG_UNLOCKED_50_STAR_DOOR | SAVE_FLAG_COLLECTED_TOAD_STAR_1
+                  | SAVE_FLAG_COLLECTED_TOAD_STAR_2 | SAVE_FLAG_COLLECTED_TOAD_STAR_3
+                  | SAVE_FLAG_COLLECTED_MIPS_STAR_1 | SAVE_FLAG_COLLECTED_MIPS_STAR_2;
+
+    // Seven stars in each of the 15 main courses, including the 100-coin star.
+    for (s32 course = COURSE_MIN; course <= COURSE_STAGES_MAX; course++) {
+        file->courseStars[course - 1] = 0x7F;
+        file->courseCoinScores[course - 1] = 100;
+    }
+    // Nine bonus courses award one star apiece, plus the timed slide star.
+    for (s32 course = COURSE_BONUS_STAGES; course < COURSE_CAKE_END; course++) {
+        file->courseStars[course - 1] = 1;
+    }
+    file->courseStars[COURSE_PSS - 1] |= 2;
+
+    // Cannon flags occupy the high bit in the byte following each course.
+    file->courseStars[COURSE_BOB] |= 0x80;
+    file->courseStars[COURSE_WF] |= 0x80;
+    file->courseStars[COURSE_JRB] |= 0x80;
+    file->courseStars[COURSE_CCM] |= 0x80;
+    file->courseStars[COURSE_SSL] |= 0x80;
+    file->courseStars[COURSE_SL] |= 0x80;
+    file->courseStars[COURSE_WDW] |= 0x80;
+    file->courseStars[COURSE_TTM] |= 0x80;
+    file->courseStars[COURSE_THI] |= 0x80;
+    file->courseStars[COURSE_RR] |= 0x80;
+    file->courseStars[COURSE_WMOTR] |= 0x80;
+
+    gSaveFileModified = TRUE;
+    save_file_do_save(SAVE_FILE_D);
+}
+#endif
+
 void save_file_load_all(void) {
     s32 file;
     s32 validSlots;
@@ -318,7 +364,11 @@ void save_file_load_all(void) {
         }
     }
 
+#ifdef TARGET_PSX
+    seed_complete_file_d();
+#else
     stub_save_file_1();
+#endif
 }
 
 /**

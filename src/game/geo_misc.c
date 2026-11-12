@@ -16,6 +16,11 @@
 #include "rendering_graph_node.h"
 #include "save_file.h"
 #include "segment2.h"
+#ifdef TARGET_PSX
+#include <port/gfx/gfx_internal.h>
+
+extern Texture psx_cake_tiles[];
+#endif
 
 /**
  * @file geo_misc.c
@@ -200,7 +205,23 @@ Gfx *geo_exec_flying_carpet_create(s32 callContext, struct GraphNode *node, UNUS
 /**
  * Create a display list for the end screen with Peach's delicious cake.
  */
-Gfx *geo_exec_cake_end_screen(s32 callContext, struct GraphNode *node, UNUSED const ShortMatrix* mtxq) {
+Gfx *geo_exec_cake_end_screen(s32 callContext, UNUSED struct GraphNode *node, UNUSED const ShortMatrix* mtxq) {
+#ifdef TARGET_PSX
+    if (callContext == GEO_CONTEXT_RENDER) {
+        enum { IMAGE_WIDTH = 316, IMAGE_HEIGHT = 228, TILE_WIDTH = 64, TILE_HEIGHT = 32 };
+        TexHeader *tile = segmented_to_virtual(psx_cake_tiles);
+        for (s32 y = 0; y < IMAGE_HEIGHT; y += TILE_HEIGHT) {
+            for (s32 x = 0; x < IMAGE_WIDTH; x += TILE_WIDTH, tile++) {
+                s16 x0 = x * SCREEN_WIDTH / IMAGE_WIDTH;
+                s16 y0 = y * SCREEN_HEIGHT / IMAGE_HEIGHT;
+                s16 x1 = (x + tile->width) * SCREEN_WIDTH / IMAGE_WIDTH;
+                s16 y1 = (y + tile->height) * SCREEN_HEIGHT / IMAGE_HEIGHT;
+                gfx_draw_background_tile(tile, x0, y0, x1 - x0, y1 - y0, 0x808080);
+            }
+        }
+    }
+    return NULL;
+#else
     struct GraphNodeGenerated *generatedNode = (struct GraphNodeGenerated *) node;
     Gfx *displayList = NULL;
     Gfx *displayListHead = NULL;
@@ -234,4 +255,5 @@ Gfx *geo_exec_cake_end_screen(s32 callContext, struct GraphNode *node, UNUSED co
     }
 
     return displayList;
+#endif
 }

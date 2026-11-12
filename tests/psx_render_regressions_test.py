@@ -1,6 +1,9 @@
 """Verify texture/font invariants without requiring Nintendo assets or an emulator."""
 import json
 from pathlib import Path
+import struct
+import subprocess
+import tempfile
 import unittest
 import sys
 
@@ -32,12 +35,16 @@ class RendererRegressionTests(unittest.TestCase):
         self.assertEqual(transition.count("gfx_emit_screen_quad_vflip(centerTransX,"), 3)
         self.assertIn("gfx_emit_screen_quad(0, 0, XRES, centerTransY - texTransRadius + 1)", transition)
 
-    def test_offline_tessellation_stays_within_overlay_budget(self):
-        mesh = (ROOT / "tools/psx_static_mesh.py").read_text()
-        pre = (ROOT / "tools/preprocess_graphics.py").read_text()
-        self.assertIn("WORLD_EDGE_LIMITS = (512, 768, 1024, 2048, 4096, 8192, 32768)", mesh)
-        self.assertIn("if native_size <= old_size:", mesh)
-        self.assertIn('128 if "levels/menu/leveldata." in out_path else 256', pre)
+    def test_file_d_contains_all_stars_and_recovers_its_backup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executable = Path(tmp) / "psx_save_file_test"
+            subprocess.run([
+                "cc", "-std=gnu2x", "-DTARGET_PSX", "-DVERSION_US",
+                "-DNON_MATCHING", "-DAVOID_UB", "-I.", "-Isrc", "-idirafter", "include",
+                "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "src/game/save_file.c", "tests/psx_save_file_test.c", "-o", executable,
+            ], cwd=ROOT, check=True)
+            subprocess.run([executable], check=True)
 
     def test_shared_material_display_lists_preserve_original_commands(self):
         jit = (ROOT / "src/port/gfx/gfx_rsp_jit.c").read_text()
@@ -77,6 +84,20 @@ class RendererRegressionTests(unittest.TestCase):
         self.assertIn("if(xa_position_poll_countdown != 0)", audio)
         self.assertIn("xa_position_poll_countdown = XA_POSITION_POLL_FRAMES - 1;", audio)
         self.assertIn("sfx_backend_tick();", audio)
+
+    def test_missing_music_keeps_the_xa_track_numbers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            track = Path(tmp) / "real.xa"
+            info = Path(tmp) / "info.dat"
+            pack = Path(tmp) / "pack.xa"
+            sector = b"A" * 2336
+            track.write_bytes(sector * 2)
+            subprocess.run([
+                sys.executable, ROOT / "tools/interleave_xa.py", info, pack, "-", track, "-",
+            ], check=True)
+            self.assertEqual(struct.unpack("<6I", info.read_bytes()),
+                             (0xFFFFFFFF, 0xFFFFFFFF, 0, 4, 0xFFFFFFFF, 0xFFFFFFFF))
+            self.assertEqual(pack.read_bytes()[4 * 2336:5 * 2336], sector)
 
     def test_completed_ps1_framebuffer_is_presented(self):
         source = (ROOT / "src/port/psx/gfx_framebuffers_psx.c").read_text()
@@ -223,6 +244,32 @@ class StaticMeshTests(unittest.TestCase):
         for group in pieces.values():
             self.assertIn((256, 0, 0), {v.xyz for tri in group for v in tri.vertices})
         self.assertEqual(len(pieces["untextured"]), 2)
+
+    def test_world_splits_target_textured_faces_and_respect_a_budget(self):
+        a = Vertex((0, 0, 0), (0, 0), (0, 0, 0))
+        b = Vertex((1024, 0, 0), (32, 0), (0, 0, 0))
+        c = Vertex((0, 1024, 0), (0, 32), (0, 0, 0))
+        untextured = Triangle((a, b, c), (0, 0), "0")
+        textured = Triangle((a, b, c), (0, 0), "PRIM_FLAG_TEXTURED")
+        self.assertEqual(tessellate({"wall": [untextured]}, 320), {"wall": [untextured]})
+        self.assertGreater(len(tessellate({"wall": [textured]}, 320)["wall"]), 1)
+        self.assertIsNone(tessellate({"wall": [textured]}, 320, max_triangles=1))
+        self.assertEqual(tessellate({"wall": [textured]}, None, max_triangles=1),
+                         {"wall": [textured]})
+
+    def test_split_drops_degenerate_faces_with_distinct_uvs(self):
+        a = Vertex((0, 0, 0), (0, 0), (0, 0, 0))
+        b = Vertex((1024, 0, 0), (32, 0), (0, 0, 0))
+        duplicate = Vertex(b.xyz, (64, 0), b.rgb)
+        triangle = Triangle((a, b, duplicate), (32, 0), "PRIM_FLAG_TEXTURED")
+        self.assertEqual(tessellate({"wall": [triangle]}, 320), {"wall": []})
+
+    def test_quantized_sliver_cannot_repeat_a_split(self):
+        a = Vertex((1382, -306, 128), (14, 14), (0, 0, 0))
+        b = Vertex((1381, -306, 332), (14, 13), (0, 0, 0))
+        c = Vertex((1382, -306, 742), (14, 14), (0, 0, 0))
+        sliver = Triangle((a, b, c), (32, 32), "PRIM_FLAG_TEXTURED")
+        self.assertLessEqual(len(tessellate({"wall": [sliver]}, 320)["wall"]), 4)
 
     def test_static_lists_emit_native_commands_and_a_texture_preamble(self):
         source = """static const Vtx triangle[] = {

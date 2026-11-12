@@ -57,7 +57,7 @@ void gfx_reset_dl_exec() {
 // Interpolate an 8-bit PS1 texture coordinate through the shortest 0..255
 // branch. A plain average turns e.g. 250 -> 6 into 128, which creates a
 // long diagonal smear after tessellation.
-DL_EXEC_ICACHE_FUNC static u8 between_uv(u8 a, u8 b) {
+[[gnu::noinline]] static u8 between_uv(u8 a, u8 b) {
 	s32 aa = a;
 	s32 bb = b;
 	s32 delta = bb - aa;
@@ -69,7 +69,7 @@ DL_EXEC_ICACHE_FUNC static u8 between_uv(u8 a, u8 b) {
 	return (u8) ((aa + bb) / 2);
 }
 
-DL_EXEC_ICACHE_FUNC static void between(GfxVtx* dst, const GfxVtx* a, const GfxVtx* b) {
+[[gnu::noinline]] static void between(GfxVtx* dst, const GfxVtx* a, const GfxVtx* b) {
 	// note: since both vertices are definitely on the scratchpad now, loads are fast here!
 	// note: the GTE has instructions for interpolation, but setting them up isn't fast enough
 	dst->x = ((s32) a->x + b->x) / 2;
@@ -84,7 +84,7 @@ DL_EXEC_ICACHE_FUNC static void between(GfxVtx* dst, const GfxVtx* a, const GfxV
 
 /* The N64->PS1 RGB modulation conversion is shared by every textured
  * polygon; the title-only geometry bit is still used for depth ordering. */
-DL_EXEC_ICACHE_FUNC static void append_poly(Packet* packet, bool is_quad, s32 sxy3, u32 flags, const GfxVtx* vtx) {
+[[gnu::noinline]] [[gnu::flatten]] static void append_poly(Packet* packet, bool is_quad, s32 sxy3, u32 flags, const GfxVtx* vtx) {
 	TexHeader* tex = (TexHeader*) tex_ptr;
 	bool textured = tex && (flags & PRIM_FLAG_TEXTURED);
 	/* N64 G_CC_BLENDRGBFADEA decals use a neutral PS1 overlay.
@@ -296,13 +296,85 @@ enum {
 /* PS1 has no N64 reflection mapper. Derive a stable, per-vertex metal
  * lookup from the original model normals; generated coordinates must be
  * calculated at draw time because normal and metal Mario share vertex lists. */
-DL_EXEC_ICACHE_FUNC static void set_reflection_uv(GfxVtx* dst, const GfxVtx* src, const TexHeader* tex) {
+[[gnu::noinline]] static void set_reflection_uv(GfxVtx* dst, const GfxVtx* src, const TexHeader* tex) {
 	int nx = (s8) src->color.r + 128;
 	int ny = (s8) src->color.g + 128;
 	int u = nx * ((tex->rotated ? tex->height : tex->width) - 1) / 255;
 	int v = ny * ((tex->rotated ? tex->width : tex->height) - 1) / 255;
 	dst->u = tex->rotated ? v : u;
 	dst->v = tex->rotated ? u : v;
+}
+
+static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, const GfxVtx* v2, const GfxVtx* v3, u32 flags, GfxVtx* storage, u32 level);
+
+[[gnu::noinline]] static void tessellate_poly(bool quad, u32 flags, GfxVtx* storage, u32 level) {
+	flags &= ~PRIM_FLAG_LIGHTED;
+	GfxVtx* const v0 = &storage[0];
+	GfxVtx* const v1 = &storage[1];
+	GfxVtx* const v2 = &storage[2];
+	GfxVtx* const v01 = &storage[V01];
+	GfxVtx* const v02 = &storage[V02];
+	GfxVtx* const v13 = &storage[V13];
+	GfxVtx* const v23 = &storage[V23];
+	GfxVtx* const vc = &storage[VC];
+	GfxVtx* const next_storage = storage + V_COUNT;
+	level++;
+	between(v01, v0, v1);
+	between(v02, v0, v2);
+	if(quad) {
+		GfxVtx* const v3 = &storage[3];
+		// remember that quads on ps1 are zigzagged!! it's kind of confusing
+		between(v13, v1, v3);
+		between(v23, v2, v3);
+		between(vc, v01, v23);
+		/*
+			.v0━━━v01━━v1
+			.┃    │    ┃
+			.v02──vc───v13
+			.┃    │    ┃
+			.v2━━━v23━━v3
+		*/
+		draw_poly(v0, v01, v02, vc, flags, next_storage, level);
+		draw_poly(v01, v1, vc, v13, flags, next_storage, level);
+		draw_poly(v02, vc, v2, v23, flags, next_storage, level);
+		draw_poly(vc, v13, v23, v3, flags, next_storage, level);
+	} else {
+		// it is important that the diagonal direction be kept consistent, so no cleverness to store 2 triangles as quads sadly
+		between(vc, v1, v2);
+		/*
+			.v0━v01━v1
+			. ┃  ╎ ╱
+			.v02╌vc
+			. ┃ ╱
+			.v2
+		*/
+		draw_poly(v0, v01, v02, vc, flags, next_storage, level);
+		draw_poly(v01, v1, vc, NULL, flags, next_storage, level);
+		draw_poly(v02, vc, v2, NULL, flags, next_storage, level);
+	}
+}
+
+[[gnu::noinline]] static s32 project_ortho(const GfxVtx* v3, GfxVtx* storage) {
+	gte_setControlReg(GTE_RT31RT32, 0);
+	gte_setControlReg(GTE_RT33, 0);
+	gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_TR);
+	gte_setDataReg(GTE_SXY0, (gte_getDataReg(GTE_IR1) & 0xFFFF) | gte_getDataReg(GTE_IR2) << 16);
+	gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V1 | GTE_MX_RT | GTE_CV_TR);
+	u32 zuv3;
+	if(v3) {
+		zuv3 = v3->zuv;
+		gte_loadDataRegM(GTE_VXY0, (const u32*) &v3->xy);
+		gte_setDataReg(GTE_VZ0, zuv3);
+	}
+	gte_setDataReg(GTE_SXY1, (gte_getDataReg(GTE_IR1) & 0xFFFF) | gte_getDataReg(GTE_IR2) << 16);
+	gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V2 | GTE_MX_RT | GTE_CV_TR);
+	gte_setDataReg(GTE_SXY2, (gte_getDataReg(GTE_IR1) & 0xFFFF) | gte_getDataReg(GTE_IR2) << 16);
+	if(v3) {
+		gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_TR);
+		storage[3].zuv = zuv3;
+		return (gte_getDataReg(GTE_IR1) & 0xFFFF) | gte_getDataReg(GTE_IR2) << 16;
+	}
+	return 0;
 }
 
 DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, const GfxVtx* v2, const GfxVtx* v3, u32 flags, GfxVtx* storage, u32 level) {
@@ -354,26 +426,8 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		z = is_2d_background ? BACKGROUND_Z : UI_Z;
 		min_z = z;
 		gte_flags = 0;
-		gte_setControlReg(GTE_RT31RT32, 0);
-		gte_setControlReg(GTE_RT33, 0);
-		gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_TR);
+		sxy3 = project_ortho(v3, storage);
 		debug_processed_poly_count++;
-		gte_setDataReg(GTE_SXY0, (gte_getDataReg(GTE_IR1) & 0xFFFF) | gte_getDataReg(GTE_IR2) << 16);
-		gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V1 | GTE_MX_RT | GTE_CV_TR);
-		u32 zuv3;
-		if(v3) {
-			zuv3 = v3->zuv;
-			gte_loadDataRegM(GTE_VXY0, (const u32*) &v3->xy);
-			gte_setDataReg(GTE_VZ0, zuv3);
-		}
-		gte_setDataReg(GTE_SXY1, (gte_getDataReg(GTE_IR1) & 0xFFFF) | gte_getDataReg(GTE_IR2) << 16);
-		gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V2 | GTE_MX_RT | GTE_CV_TR);
-		gte_setDataReg(GTE_SXY2, (gte_getDataReg(GTE_IR1) & 0xFFFF) | gte_getDataReg(GTE_IR2) << 16);
-		if(v3) {
-			gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_TR);
-			storage[3].zuv = zuv3;
-			sxy3 = (gte_getDataReg(GTE_IR1) & 0xFFFF) | gte_getDataReg(GTE_IR2) << 16;
-		}
 	} else {
 		// RTPT transforms and projects all 3 vertices in a mere 23 cycles. based GTE :)
 		gte_commandNoNop(GTE_CMD_RTPT | GTE_SF);
@@ -534,67 +588,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		&& level < VANITY_TESSELLATION;
 
 	if(needs_vanity_tessellation) {
-		flags &= ~PRIM_FLAG_LIGHTED;
-		GfxVtx* const v0 = &storage[0];
-		GfxVtx* const v1 = &storage[1];
-		GfxVtx* const v2 = &storage[2];
-		GfxVtx* const v01 = &storage[V01];
-		GfxVtx* const v02 = &storage[V02];
-		GfxVtx* const v13 = &storage[V13];
-		GfxVtx* const v23 = &storage[V23];
-		GfxVtx* const vc = &storage[VC];
-		GfxVtx* const next_storage = storage + V_COUNT;
-		level++;
-		between(v01, v0, v1);
-		between(v02, v0, v2);
-		if(v3) {
-			GfxVtx* const v3 = &storage[3];
-			// remember that quads on ps1 are zigzagged!! it's kind of confusing
-			between(v13, v1, v3);
-			between(v23, v2, v3);
-			between(vc, v01, v23);
-			/*
-				.v0━━━v01━━v1
-				.┃    │    ┃
-				.v02──vc───v13
-				.┃    │    ┃
-				.v2━━━v23━━v3
-			*/
-			draw_poly(v0, v01, v02, vc, flags, next_storage, level);
-			draw_poly(v01, v1, vc, v13, flags, next_storage, level);
-			draw_poly(v02, vc, v2, v23, flags, next_storage, level);
-			draw_poly(vc, v13, v23, v3, flags, next_storage, level);
-
-			#ifdef NO_GAPS
-			// prevent T junction gaps
-			flags &= ~PRIM_FLAG_TESSELLATE;
-			draw_poly(v0, v01, v1, NULL, flags, next_storage, depth);
-			draw_poly(v0, v02, v2, NULL, flags, next_storage, depth);
-			draw_poly(v2, v23, v3, NULL, flags, next_storage, depth);
-			draw_poly(v3, v13, v1, NULL, flags, next_storage, depth);
-			#endif
-		} else {
-			// it is important that the diagonal direction be kept consistent, so no cleverness to store 2 triangles as quads sadly
-			between(vc, v1, v2);
-			/*
-				.v0━v01━v1
-				. ┃  ╎ ╱
-				.v02╌vc
-				. ┃ ╱
-				.v2
-			*/
-			draw_poly(v0, v01, v02, vc, flags, next_storage, level);
-			draw_poly(v01, v1, vc, NULL, flags, next_storage, level);
-			draw_poly(v02, vc, v2, NULL, flags, next_storage, level);
-
-			#ifdef NO_GAPS
-			// prevent T junction gaps
-			flags &= ~PRIM_FLAG_TESSELLATE;
-			draw_poly(v0, v02, v2, NULL, flags, next_storage, depth);
-			draw_poly(v0, v1, v01, NULL, flags, next_storage, depth);
-			draw_poly(v1, vc, v2, NULL, flags, next_storage, depth);
-			#endif
-		}
+		tessellate_poly(v3 != NULL, flags, storage, level);
 		return;
 	}
 
@@ -610,7 +604,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 	emit_poly_packet(v3 != NULL, sxy3, flags, storage, sort_z);
 }
 
-DL_EXEC_ICACHE_FUNC static void set_light(u32 normals, u32 rgb, u32 light_idx) {
+[[gnu::noinline]] static void set_light(u32 normals, u32 rgb, u32 light_idx) {
 	gte_setDataReg(GTE_VXY0, (u32) ((s32) normals << 24 >> 8) >> 16 | (s32) (normals & 0xFF00) << 16 >> 8);
 	gte_setDataReg(GTE_VZ0, (s32) normals << 8 >> 24);
 	gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_NONE);
@@ -742,7 +736,7 @@ DL_EXEC_ICACHE_FUNC static void set_light(u32 normals, u32 rgb, u32 light_idx) {
 	gfx_packet_end(packet, z);
 }
 
-DL_EXEC_ICACHE_FUNC static void handle_sprite(u32 cmd) {
+[[gnu::noinline]] static void handle_sprite(u32 cmd) {
 	s32 x = ((u32) cmd << 20) >> 20;
 	s32 y = ((u32) cmd << 8) >> 20;
 	u16 z = is_2d_background ? BACKGROUND_Z : UI_Z;

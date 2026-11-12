@@ -212,7 +212,7 @@ ALIGNED8 static const Texture texture_menu_copy[] = {
 };
 
 // 0x07004468 - 0x07004468
-ALIGNED8 static const Texture texture_menu_file[] = {
+ALIGNED8 const Texture texture_menu_file[] = {
 #include "levels/menu/main_menu_seg7.04468.rgba16.inc.c"
 };
 

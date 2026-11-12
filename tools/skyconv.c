@@ -577,7 +577,43 @@ bool imageMatchesDimensions(int width, int height) {
     return true;
 }
 
+static int split_psx_cake(const char *path, const char *directory) {
+    enum { TILE_WIDTH = 64, TILE_HEIGHT = 32 };
+    int width, height;
+    rgba *image = png2rgba(path, &width, &height);
+    if (image == NULL || width != 316 || height != 228) {
+        fprintf(stderr, "Expected a 316x228 US cake image: %s\n", path);
+        free(image);
+        return EXIT_FAILURE;
+    }
+
+    int index = 0;
+    for (int y = 0; y < height; y += TILE_HEIGHT) {
+        int tile_height = height - y < TILE_HEIGHT ? height - y : TILE_HEIGHT;
+        for (int x = 0; x < width; x += TILE_WIDTH) {
+            int tile_width = width - x < TILE_WIDTH ? width - x : TILE_WIDTH;
+            rgba tile[TILE_WIDTH * TILE_HEIGHT];
+            for (int row = 0; row < tile_height; row++) {
+                memcpy(tile + row * tile_width, image + (y + row) * width + x,
+                       tile_width * sizeof(*tile));
+            }
+            char output_path[PATH_MAX];
+            int written = snprintf(output_path, sizeof(output_path), "%s/%d.png", directory, index++);
+            if (written < 0 || (size_t) written >= sizeof(output_path)
+                    || !rgba2png(output_path, tile, tile_width, tile_height)) {
+                free(image);
+                return EXIT_FAILURE;
+            }
+        }
+    }
+    free(image);
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char *argv[]) {
+    if (argc == 4 && strcmp(argv[1], "--split-psx-cake") == 0) {
+        return split_psx_cake(argv[2], argv[3]);
+    }
     if (parse_arguments(argc, argv) == false) {
         return EXIT_FAILURE;
     }
