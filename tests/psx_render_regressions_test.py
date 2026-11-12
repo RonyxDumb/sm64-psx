@@ -20,6 +20,15 @@ class RendererRegressionTests(unittest.TestCase):
         self.assertIn("coin_seg3_dl_03007780", coin)
         self.assertIn("dl_tex_block_menu_save_button_base", menu)
 
+    def test_painting_material_state_is_restored_for_every_picture(self):
+        painting = (ROOT / "levels/castle_inside/painting.inc.c").read_text()
+        preamble_start = painting.index("static const Gfx inside_castle_seg7_dl_07021A48[]")
+        preamble_end = painting.index("};", preamble_start)
+        self.assertNotIn("gsSPLight(", painting[preamble_start:preamble_end])
+        self.assertEqual(painting.count("gsSPDisplayList(inside_castle_seg7_dl_07021A48),"), 12)
+        self.assertEqual(painting.count("gsSPLight(&inside_castle_seg7_lights_07021800.l, 1),"), 12)
+        self.assertEqual(painting.count("gsSPLight(&inside_castle_seg7_lights_07021800.a, 2),"), 12)
+
     def test_power_meter_stays_below_coin_counter(self):
         hud = (ROOT / "src/game/hud.c").read_text()
         self.assertIn("static s16 power_meter_draw_y(void)", hud)
