@@ -504,25 +504,43 @@ u32 setup_mario_anims(struct DmaHandlerList *list, void *segment_start, UNUSED v
 }
 
 static void receive(uint8_t* buf, uint32_t start, uint32_t len) {
-	assert(start + len < ANIM_MAIN_DATA_SIZE);
+	// Animation tracks are stored in contiguous VRAM rows. Read complete
+	// rows in one GPU transfer rather than stalling once per row. Keep edge
+	// rows in a staging buffer to avoid copying past the requested size.
+	assert(start <= ANIM_MAIN_DATA_SIZE && len <= ANIM_MAIN_DATA_SIZE - start);
+	if(len == 0) return;
+
 	u32 y = VRAM_Y + start / VRAM_ROW_BYTES;
-	u32 first_row_offset = start % VRAM_ROW_BYTES;
+	u32 offset = start % VRAM_ROW_BYTES;
 	u32 pos = 0;
-	while(pos < len) { // TODO: optimize this perhaps?
-		u8 alignas(u32) row[VRAM_ROW_BYTES];
-		receiveVRAMData(row, VRAM_X, y, VRAM_WIDTH, 1);
-		u32 copy_offset = 0;
-		u32 copy_len = VRAM_ROW_BYTES;
-		if(pos == 0) {
-			copy_offset = first_row_offset;
-			copy_len = VRAM_ROW_BYTES - first_row_offset;
-			if(len < copy_len) {
-				copy_len = len;
+	u8 alignas(u32) row[VRAM_ROW_BYTES];
+
+	if(offset) {
+		receiveVRAMData(row, VRAM_X, y++, VRAM_WIDTH, 1);
+		u32 copy_len = VRAM_ROW_BYTES - offset;
+		if(copy_len > len) copy_len = len;
+		memcpy(buf, row + offset, copy_len);
+		pos = copy_len;
+	}
+
+	u32 full_rows = (len - pos) / VRAM_ROW_BYTES;
+	if(full_rows) {
+		if(((uintptr_t)(buf + pos) & 3) == 0) {
+			receiveVRAMData(buf + pos, VRAM_X, y, VRAM_WIDTH, full_rows);
+		} else {
+			// Preserve the GPU DMA alignment requirement for unusual buffers.
+			for(u32 i = 0; i < full_rows; i++) {
+				receiveVRAMData(row, VRAM_X, y + i, VRAM_WIDTH, 1);
+				memcpy(buf + pos + i * VRAM_ROW_BYTES, row, VRAM_ROW_BYTES);
 			}
 		}
-		memcpy(buf + pos, row + copy_offset, copy_len);
-		pos += copy_len;
-		y++;
+		pos += full_rows * VRAM_ROW_BYTES;
+		y += full_rows;
+	}
+
+	if(pos < len) {
+		receiveVRAMData(row, VRAM_X, y, VRAM_WIDTH, 1);
+		memcpy(buf + pos, row, len - pos);
 	}
 }
 
