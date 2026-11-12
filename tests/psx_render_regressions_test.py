@@ -11,6 +11,13 @@ from psx_static_mesh import Triangle, Vertex, compile_mesh, emit_list, read_comb
 
 
 class RendererRegressionTests(unittest.TestCase):
+    def test_xa_loop_position_is_not_polled_every_frame(self):
+        audio = (ROOT / "src/port/psx/audio_psx.c").read_text()
+        self.assertIn("#define XA_POSITION_POLL_FRAMES 4", audio)
+        self.assertIn("if(xa_position_poll_countdown != 0)", audio)
+        self.assertIn("xa_position_poll_countdown = XA_POSITION_POLL_FRAMES - 1;", audio)
+        self.assertIn("sfx_backend_tick();", audio)
+
     def test_completed_ps1_framebuffer_is_presented(self):
         source = (ROOT / "src/port/psx/gfx_framebuffers_psx.c").read_text()
         self.assertIn("selected_fb ^= 1;", source)

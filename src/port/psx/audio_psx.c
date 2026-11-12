@@ -918,6 +918,11 @@ bool cd_playing_audio = false;
 #if !defined(SERIAL) && !defined(BENCH)
 MinSecFrame cd_audio_start_msf;
 static u8 cur_song_idx;
+/* Reading the XA sector position requires synchronous CD-ROM commands.
+ * Checking every game frame unnecessarily stalls the CPU while the disc
+ * drive is streaming music. Four game frames keep loop restart latency low. */
+#define XA_POSITION_POLL_FRAMES 4
+static u8 xa_position_poll_countdown;
 #endif
 
 void play_music(UNUSED u8 player, UNUSED u16 seqArgs, UNUSED u16 fadeTimer) {
@@ -937,6 +942,7 @@ void play_music(UNUSED u8 player, UNUSED u16 seqArgs, UNUSED u16 fadeTimer) {
 			psx_cd_run_cmd(CDROM_SETLOC, cd_audio_start_msf.bytes, 3, NULL, 0);
 			psx_cd_run_cmd(CDROM_READS, NULL, 0, NULL, 0);
 			cd_playing_audio = true;
+			xa_position_poll_countdown = 0;
 		}
 	}
 #endif
@@ -945,7 +951,14 @@ void play_music(UNUSED u8 player, UNUSED u16 seqArgs, UNUSED u16 fadeTimer) {
 void audio_backend_tick() {
 	sfx_backend_tick();
 #if !defined(SERIAL) && !defined(BENCH)
-	if(cd_playing_audio) {
+	if(!cd_playing_audio) {
+		xa_position_poll_countdown = 0;
+	} else {
+		if(xa_position_poll_countdown != 0) {
+			xa_position_poll_countdown--;
+			return;
+		}
+		xa_position_poll_countdown = XA_POSITION_POLL_FRAMES - 1;
 		MinSecFrame playing_msf;
 		u8 stat;
 		psx_cd_run_cmd(CDROM_NOP, NULL, 0, &stat, 1);
