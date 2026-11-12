@@ -116,9 +116,9 @@ class RendererRegressionTests(unittest.TestCase):
 
     def test_power_meter_uses_one_consistent_coordinate_system(self):
         hud = (ROOT / "src/game/hud.c").read_text()
-        self.assertIn("gfx_emit_screen_quad(sPowerMeterHUD.x, sPowerMeterHUD.y + 32,", hud)
-        self.assertIn("gfx_emit_screen_quad(sPowerMeterHUD.x + 32, sPowerMeterHUD.y + 32,", hud)
-        self.assertIn("gfx_emit_sprite(sPowerMeterHUD.x + 16, YRES - sPowerMeterHUD.y - 32 + 16)", hud)
+        self.assertIn("gfx_emit_screen_quad(sPowerMeterHUD.x, power_meter_draw_y() + 32,", hud)
+        self.assertIn("gfx_emit_screen_quad(sPowerMeterHUD.x + 32, power_meter_draw_y() + 32,", hud)
+        self.assertIn("gfx_emit_sprite(sPowerMeterHUD.x + 16, YRES - power_meter_draw_y() - 32 + 16)", hud)
         self.assertIn("if (sPowerMeterHUD.animation == POWER_METER_HIDDEN) {\n        return;", hud)
         self.assertNotIn("gfx_emit_screen_quad_vflip(sPowerMeterHUD.x", hud)
 
