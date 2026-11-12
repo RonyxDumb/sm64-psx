@@ -299,7 +299,8 @@ static void klepto_act_reset_position(void) {
     } else if (o->oBehParams2ndByte != 0) {
         QSETFIELD(o,  oHomeX, q(-2000));
         QSETFIELD(o,  oHomeZ, q(-1000));
-        FSETFIELD(o, oHomeY, QSETFIELD(o,  oKleptoDistanceToTarget, q(9999)));
+        QSETFIELD(o, oHomeY, q(9999));
+        QSETFIELD(o, oKleptoDistanceToTarget, q(9999));
 
         if (QFIELD(o, oPosY) > q(5000.0f)) {
             obj_mark_for_deletion(o);

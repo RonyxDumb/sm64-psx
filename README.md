@@ -31,7 +31,7 @@ Mario D starts with 120 stars, the cap switches, the castle doors and the cannon
 
 Hold L1 while pressing Start on the title screen to open the level test menu. It uses Mario D and act 6.
 
-The US build was tested in an emulator with 2 MiB of RAM. All 31 level entries loaded from the test menu, the pause menu opened and closed, and the credits played from Peach's cutscene through the cake screen.
+The US build was tested in an emulator with 2 MiB of RAM. All 31 level entries loaded from the test menu. The pause menu opened and closed, the Bob-omb Battlefield painting led to a playable act through Star Select, and Lakitu flew up to Mario and returned control after the bridge dialog. The credits played from Peach's cutscene through the cake screen.
 
 ## Remaining issues
 

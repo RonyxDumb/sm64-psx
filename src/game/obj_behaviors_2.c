@@ -309,8 +309,8 @@ static s16 obj_get_pitch_to_home(f32 latDistToHome) {
 }
 
 static void obj_compute_vel_from_move_pitchq(q32 speedq) {
-    FSETFIELD(o, oForwardVel, qmul(speedq, cosqs(o->oMoveAnglePitch)));
-    FSETFIELD(o, oVelY, qmul(speedq, -sinqs(o->oMoveAnglePitch)));
+    QSETFIELD(o, oForwardVel, qmul(speedq, cosqs(o->oMoveAnglePitch)));
+    QSETFIELD(o, oVelY, qmul(speedq, -sinqs(o->oMoveAnglePitch)));
 }
 
 static s32 clamp_s16(s16 *value, s16 minimum, s16 maximum) {
