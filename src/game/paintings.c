@@ -953,7 +953,13 @@ Gfx *painting_ripple_image(struct Painting *painting) {
     s16 tHeight = painting->textureHeight;
     s16 **textureMaps = segmented_to_virtual(painting->textureMaps);
     u8 **textures = segmented_to_virtual(painting->textureArray);
-    Gfx *dlist = alloc_display_list((imageCount + 9) * sizeof(Gfx));
+    Gfx *dlist = alloc_display_list(
+#ifdef TARGET_PSX
+        (imageCount + 9) * sizeof(Gfx)
+#else
+        (imageCount + 6) * sizeof(Gfx)
+#endif
+    );
     Gfx *gfx = dlist;
     Gfx *transform = painting_model_view_transform(painting);
 
@@ -969,11 +975,6 @@ Gfx *painting_ripple_image(struct Painting *painting) {
     gSPSetGeometryMode(gfx++, G_LIGHTING | G_SHADING_SMOOTH);
     gDPSetCombineMode(gfx++, G_CC_MODULATERGBA, G_CC_MODULATERGBA);
     gSPTexture(gfx++, 0xFFFF, 0xFFFF, 0, G_TX_RENDERTILE, G_ON);
-#else
-    /* Keep the same allocation/command counts for non-PS1 targets. */
-    gDPNoOp(gfx++);
-    gDPNoOp(gfx++);
-    gDPNoOp(gfx++);
 #endif
     gSPDisplayList(gfx++, dl_paintings_rippling_begin);
     gSPDisplayList(gfx++, painting->rippleDisplayList);
