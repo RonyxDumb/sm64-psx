@@ -46,6 +46,18 @@ class RendererRegressionTests(unittest.TestCase):
             ], cwd=ROOT, check=True)
             subprocess.run([executable], check=True)
 
+    def test_effects_pool_rejoins_both_adjacent_blocks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            executable = Path(tmp) / "psx_memory_pool_test"
+            subprocess.run([
+                "cc", "-std=gnu2x", "-DTARGET_PC", "-DVERSION_US",
+                "-DNON_MATCHING", "-DAVOID_UB", "-I.", "-Isrc", "-idirafter", "include",
+                "-include", "include/assert.h",
+                "-ffunction-sections", "-fdata-sections", "-Wl,--gc-sections",
+                "src/game/memory.c", "tests/psx_memory_pool_test.c", "-o", executable,
+            ], cwd=ROOT, check=True)
+            subprocess.run([executable], check=True)
+
     def test_shared_material_display_lists_preserve_original_commands(self):
         jit = (ROOT / "src/port/gfx/gfx_rsp_jit.c").read_text()
         self.assertIn("if(!was_useful) return false;", jit)

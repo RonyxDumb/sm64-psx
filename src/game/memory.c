@@ -333,7 +333,7 @@ static void merge_blocks(struct MemoryBlock* first, struct MemoryBlock* second) 
  */
 struct MemoryPool* mem_pool_init(u32 size, u32 side) {
 	size = ALIGNPTR(size);
-	struct MemoryPool* pool = main_pool_alloc(size + sizeof(struct MemoryPool), side);
+	struct MemoryPool* pool = main_pool_alloc(size + sizeof(struct MemoryPool) + sizeof(struct MemoryBlock), side);
 	assert(pool);
 	pool->first_free = (struct MemoryBlock*) (pool + 1);
 	pool->first_free->prev = NULL;
@@ -348,7 +348,7 @@ struct MemoryPool* mem_pool_init(u32 size, u32 side) {
 void* mem_pool_alloc(struct MemoryPool* pool, u32 size) {
 	size = ALIGNPTR(size);
 	struct MemoryBlock* search = pool->first_free;
-	assert(!search->prev);
+	assert(!search || !search->prev);
 	while(search) {
 		if(search->size >= size) {
 			u32 remaining_size = search->size - size;
@@ -380,45 +380,40 @@ void* mem_pool_alloc(struct MemoryPool* pool, u32 size) {
 		}
 		search = search->next;
 	}
-	unreachable();
+	return NULL;
 }
 
 /**
  * Free a block that was allocated using mem_pool_alloc.
  */
 void mem_pool_free(struct MemoryPool* pool, void* addr) {
+	if(!addr) return;
+
 	struct MemoryBlock* blk = (struct MemoryBlock*) addr - 1;
-	struct MemoryBlock* search = pool->first_free;
-	if(search) {
-		if((uintptr_t) search > (uintptr_t) blk) {
-			blk->prev = NULL;
-			blk->next = search;
-			blk->next->prev = blk;
-			if(blk_data_ptr(blk) + blk->size == blk->next) {
-				merge_blocks(blk, blk->next);
-			}
-			pool->first_free = blk;
-		} else {
-			do {
-				if((uintptr_t) search->next - 1 > (uintptr_t) blk) {
-					blk->prev = search;
-					blk->next = search->next;
-					search->next = blk;
-					if(blk_data_ptr(blk->prev) + blk->prev->size == blk) {
-						merge_blocks(blk->prev, blk);
-					}
-					if(blk->next && blk_data_ptr(blk) + blk->size == blk->next) {
-						merge_blocks(blk, blk->next);
-					}
-					return;
-				}
-				search = search->next;
-			} while(search);
-		}
+	struct MemoryBlock* prev = NULL;
+	struct MemoryBlock* next = pool->first_free;
+	while(next && (uintptr_t) next < (uintptr_t) blk) {
+		prev = next;
+		next = next->next;
+	}
+
+	blk->prev = prev;
+	blk->next = next;
+	if(prev) {
+		prev->next = blk;
 	} else {
-		blk->prev = NULL;
-		blk->next = NULL;
 		pool->first_free = blk;
+	}
+	if(next) {
+		next->prev = blk;
+	}
+
+	if(prev && (u8*) blk_data_ptr(prev) + prev->size == (u8*) blk) {
+		merge_blocks(prev, blk);
+		blk = prev;
+	}
+	if(next && (u8*) blk_data_ptr(blk) + blk->size == (u8*) next) {
+		merge_blocks(blk, next);
 	}
 }
 

@@ -31,11 +31,13 @@ Mario D starts with 120 stars, the cap switches, the castle doors and the cannon
 
 Hold L1 while pressing Start on the title screen to open the level test menu. It uses Mario D and act 6.
 
+The US build was tested in an emulator with 2 MiB of RAM. All 31 level entries loaded from the test menu, the pause menu opened and closed, and the credits played from Peach's cutscene through the cake screen.
+
 ## Remaining issues
 
 - The soundtrack still requires WAV inputs. Sound effects can differ from the original in pitch, timing or missing notes.
-- Some animations, scripted camera shots and the first-visit Lakitu cutscene still need gameplay validation. The interactive Mario head is unfinished.
-- Level starts, the pause menu and the final cake screen can be tested on a 2 MiB emulator. The complete run through every area, cutscene and credits entry still needs regression coverage.
+- Some animations and scripted camera shots still need gameplay validation. The interactive Mario head is unfinished.
+- Full playthroughs and routes through every subarea still need regression coverage.
 - Some faces still exhibit affine distortion, sorting errors or visible seams. Texture uploads can still pause gameplay when an asset first enters VRAM.
 
 The [Psy-Q run-time overview](https://psx.arthus.net/sdk/Psy-Q/DOCS/LibOver47.pdf) and [PSX-SPX GPU documentation](https://psx-spx.consoledev.net/dev/ps1/gpu/misc/) describe the affine texture interpolation that motivates build-time subdivision.
