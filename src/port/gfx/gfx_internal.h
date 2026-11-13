@@ -104,15 +104,6 @@ void ensure_vertices_converted(VtxList* vtx_list, u32 count);
 
 #define COMPILED_TAG 0x777A1210 // MARIO :)
 
-/* Model-space bounding sphere of one loaded vertex group, stored in the
- * spare tail of the in-place converted N64 vertex list (PS1 vertices are
- * 4 bytes smaller than N64 ones). Used to skip whole groups outside the
- * view frustum before any triangle is transformed. */
-typedef struct {
-	s16 x, y, z;
-	u16 radius;
-} CullSphere;
-
 void gfx_begin_queueing_for_tessellation(const GfxVtx* v0, const GfxVtx* v1, const GfxVtx* v2, const GfxVtx* v3, u8 flags);
 void gfx_finish_queueing_for_tessellation(u32 rgb0, u32 rgb1, u32 rgb2, u32 rgb3);
 

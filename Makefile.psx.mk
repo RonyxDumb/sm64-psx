@@ -134,7 +134,7 @@ LD := $(CC)
 TARGET_CFLAGS := -Wall -Wextra -Wno-maybe-uninitialized -Wno-error=cpp -Wno-comment -Wno-unused-const-variable
 
 # despite -Os/-Oz being commonly recommended due to code size savings, it runs much better with -O2
-TARGET_CFLAGS += -O2 $(EXTRA_CFLAGS)
+TARGET_CFLAGS += -O2 $(EXTRA_CFLAGS) # e.g. EXTRA_CFLAGS=-g for PC-sample profiling
 
 # necessary ABI and environment flags
 TARGET_CFLAGS += -march=$(ARCH) \

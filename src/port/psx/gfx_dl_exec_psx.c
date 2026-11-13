@@ -28,7 +28,6 @@ scratchpad void* tex_ptr;
 scratchpad static GfxVtx* vertices;
 scratchpad static Color env_color;
 scratchpad static bool is_ortho;
-scratchpad static bool group_culled; // current vertex group is outside the frustum
 static bool is_2d_background;
 static bool texture_gen_enabled;
 static bool native_uv;
@@ -40,7 +39,6 @@ void gfx_reset_dl_exec() {
 	native_uv = false;
 	env_color.as_u32 = 0xFFFFFFFF;
 	is_ortho = false;
-	group_culled = false;
 	gfx_modelview_identity();
 	gte_setControlReg(GTE_RBK, 0);
 	gte_setControlReg(GTE_GBK, 0);
@@ -88,7 +86,7 @@ void gfx_reset_dl_exec() {
 
 /* The N64->PS1 RGB modulation conversion is shared by every textured
  * polygon; the title-only geometry bit is still used for depth ordering. */
-[[gnu::section(".dl_exec")]] [[gnu::noinline]] [[gnu::flatten]] static void append_poly(Packet* packet, bool is_quad, s32 sxy3, u32 flags, const GfxVtx* vtx) {
+[[gnu::noinline]] [[gnu::flatten]] static void append_poly(Packet* packet, bool is_quad, s32 sxy3, u32 flags, const GfxVtx* vtx) {
 	TexHeader* tex = (TexHeader*) tex_ptr;
 	bool textured = tex && (flags & PRIM_FLAG_TEXTURED);
 	/* N64 G_CC_BLENDRGBFADEA decals use a neutral PS1 overlay.
@@ -961,102 +959,9 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 	gfx_packet_end(packet, z);
 }
 
-/* Bounding-sphere frustum test for a vertex group (see CullSphere). The
- * radius is scaled by the current matrix: max(row norm, column norm) of RT
- * is exact for rotation*scale and scale*rotation matrices. Planes are the
- * real screen edges (no guard band), near = H/2 and far = MAX_Z, matching
- * the per-polygon rejection in draw_poly(). */
-static struct {
-	u32 rt[5];
-	u32 scale_q8;
-	s32 focal;
-	u32 len_x, len_y;
-} cull_cache;
-
-[[gnu::noinline]] static bool sphere_outside_frustum(const CullSphere* s) {
-	if(is_ortho) return false;
-	u32 rt[5] = {
-		gte_getControlReg(GTE_RT11RT12), gte_getControlReg(GTE_RT13RT21),
-		gte_getControlReg(GTE_RT22RT23), gte_getControlReg(GTE_RT31RT32),
-		gte_getControlReg(GTE_RT33),
-	};
-	if(rt[0] != cull_cache.rt[0] || rt[1] != cull_cache.rt[1] || rt[2] != cull_cache.rt[2]
-		|| rt[3] != cull_cache.rt[3] || rt[4] != cull_cache.rt[4] || !cull_cache.scale_q8) {
-		s32 m[9] = {
-			(s16) rt[0], (s16) (rt[0] >> 16), (s16) rt[1],
-			(s16) (rt[1] >> 16), (s16) rt[2], (s16) (rt[2] >> 16),
-			(s16) rt[3], (s16) (rt[3] >> 16), (s16) rt[4],
-		};
-		u32 best = 0;
-		for(u32 i = 0; i < 3; i++) {
-			u32 row = 0, col = 0;
-			for(u32 j = 0; j < 3; j++) {
-				s32 a = m[i * 3 + j] >> 4, b = m[j * 3 + i] >> 4; // 4.8
-				row += (u32) (a * a);
-				col += (u32) (b * b);
-			}
-			if(row > best) best = row;
-			if(col > best) best = col;
-		}
-		for(u32 i = 0; i < 5; i++) cull_cache.rt[i] = rt[i];
-		cull_cache.scale_q8 = sqrtu(best) + 1; // 1.0 == 256
-	}
-	s32 focal = (s32) (gte_getControlReg(GTE_H) & 0xFFFF);
-	if(focal != cull_cache.focal) {
-		cull_cache.focal = focal;
-		cull_cache.len_x = sqrtu((u32) (focal * focal + (XRES / 2) * (XRES / 2))) + 1;
-		cull_cache.len_y = sqrtu((u32) (focal * focal + (YRES / 2) * (YRES / 2))) + 1;
-	}
-	gte_setV0(s->x, s->y, s->z);
-	gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_TR);
-	s32 cx = (s32) gte_getDataReg(GTE_MAC1);
-	s32 cy = (s32) gte_getDataReg(GTE_MAC2);
-	s32 cz = (s32) gte_getDataReg(GTE_MAC3);
-	const s32 limit = 1 << 20; // keep every product below 2^31
-	if(cx <= -limit || cx >= limit || cy <= -limit || cy >= limit || cz <= -limit || cz >= limit) return false;
-	u32 r = ((u32) s->radius * cull_cache.scale_q8 >> 8) + 2;
-	if(r >= (1 << 16)) return false;
-	s32 radius = (s32) r;
-	if(cz + radius <= focal / 2) return true;   // wholly behind the near plane
-	if(cz - radius >= MAX_Z) return true;       // wholly beyond the far limit
-	s32 rx = radius * (s32) cull_cache.len_x;
-	if(cx * focal + cz * (XRES / 2) < -rx) return true;
-	if(-cx * focal + cz * (XRES / 2) < -rx) return true;
-	s32 ry = radius * (s32) cull_cache.len_y;
-	if(cy * focal + cz * (YRES / 2) < -ry) return true;
-	if(-cy * focal + cz * (YRES / 2) < -ry) return true;
-	return false;
-}
-
 [[gnu::noinline]] static void handle_extra_cmd(u8 op, u32 cmd) {
-	// Rare commands live here to keep gfx_run_compiled_dl() within the icache.
+	assert(op >= _DL_CMD_ENUM_FIRST_EXTRA && op <= _DL_CMD_ENUM_END);
 	switch(op) {
-		case DL_CMD_SET_BACKGROUND: {
-			is_2d_background = cmd; //& 1;
-			break;
-		}
-		case DL_CMD_SET_ORTHO: {
-			is_ortho = cmd; //& 1;
-			break;
-		}
-		case DL_CMD_SPRITE: {
-			handle_sprite(cmd);
-			break;
-		}
-		case DL_CMD_TEXTURE_GEN_ON: {
-			texture_gen_enabled = true;
-			break;
-		}
-		case DL_CMD_TEXTURE_GEN_OFF: {
-			texture_gen_enabled = false;
-			break;
-		}
-		case DL_CMD_CULL_SPHERE: {
-			group_culled = sphere_outside_frustum((const CullSphere*) cmd);
-			PROF_COUNT(PROF_N_CULL_TESTS);
-			if(group_culled) PROF_COUNT(PROF_N_CULLED);
-			break;
-		}
 		case DL_CMD_MTX_MUL: {
 			const ShortMatrix* mtx = (const ShortMatrix*) cmd;
 			gfx_modelview_mul(mtx);
@@ -1147,7 +1052,6 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 			case DL_CMD_VTX: {
 				vertices = (GfxVtx*) cmd;
 				native_uv = false;
-				group_culled = false;
 				break;
 			}
 			case DL_CMD_SEG_VTX: {
@@ -1162,7 +1066,6 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 				break;
 			}
 			case DL_CMD_TRI: case DL_CMD_QUAD: {
-				if(group_culled) break;
 				draw_poly(
 					&vertices[cmd >> 20],
 					&vertices[cmd >> 16 & 0xF],
@@ -1208,6 +1111,26 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 			}
 			case DL_CMD_MULTIPLIER: {
 				gte_setControlReg(GTE_H, cmd /*& 0xFFFFFF*/);
+				break;
+			}
+			case DL_CMD_SET_BACKGROUND: {
+				is_2d_background = cmd; //& 1;
+				break;
+			}
+			case DL_CMD_SET_ORTHO: {
+				is_ortho = cmd; //& 1;
+				break;
+			}
+			case DL_CMD_SPRITE: {
+				handle_sprite(cmd);
+				break;
+			}
+			case DL_CMD_TEXTURE_GEN_ON: {
+				texture_gen_enabled = true;
+				break;
+			}
+			case DL_CMD_TEXTURE_GEN_OFF: {
+				texture_gen_enabled = false;
 				break;
 			}
 			default: {
