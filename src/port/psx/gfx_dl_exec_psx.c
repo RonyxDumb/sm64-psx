@@ -463,6 +463,72 @@ static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, const GfxVtx* v2, cons
 	return 0;
 }
 
+/* Crack-free near-camera tessellation for triangles. The old rule split a
+ * whole polygon when *it* was large and near, so a split edge often met an
+ * unsplit neighbour: the projected, rounded midpoint is not exactly on the
+ * neighbour's edge and the sky showed through as a dotted line (castle
+ * grounds sand). Here every edge decides on its own from its two vertices
+ * only (model-space length and GTE depth), so both triangles sharing an
+ * edge always agree and create the same midpoint; each triangle is then
+ * cut into 1-4 pieces according to its split edges. */
+#define TESSELLATION_EDGE 384
+
+static const u8 edge_split_tris[8][4][3] = {
+	/* corners: 0=v0 1=m01 2=v1 3=m12 4=v2 5=m20; listed in winding order */
+	[1] = {{0, 1, 4}, {1, 2, 4}},
+	[2] = {{0, 2, 3}, {0, 3, 4}},
+	[3] = {{1, 2, 3}, {0, 1, 3}, {0, 3, 4}},
+	[4] = {{0, 2, 5}, {5, 2, 4}},
+	[5] = {{0, 1, 5}, {1, 2, 4}, {1, 4, 5}},
+	[6] = {{5, 3, 4}, {0, 2, 3}, {0, 3, 5}},
+	[7] = {{0, 1, 5}, {1, 2, 3}, {5, 3, 4}, {1, 3, 5}},
+};
+static const u8 edge_split_tri_count[8] = {0, 2, 2, 3, 2, 3, 3, 4};
+
+[[gnu::noinline]] static bool tessellate_triangle_edges(u32 flags, GfxVtx* storage, u32 level) {
+	// SZ1..SZ3 still hold this triangle's RTPT depths (lighting does not touch them).
+	s32 sz[3] = {
+		(s32) gte_getDataReg(GTE_SZ1), (s32) gte_getDataReg(GTE_SZ2), (s32) gte_getDataReg(GTE_SZ3)
+	};
+	s32 max_z = MAX_TESSELLATION_Z >> level;
+	u32 min_len = TESSELLATION_EDGE >> level;
+	u32 split = 0;
+	GfxVtx* corner[6] = {&storage[0], &storage[V01], &storage[1], &storage[V02], &storage[2], &storage[V13]};
+	for(u32 e = 0; e < 3; e++) {
+		GfxVtx* a = corner[e * 2];
+		GfxVtx* b = corner[(e * 2 + 2) % 6];
+		if((sz[e] < sz[(e + 1) % 3] ? sz[e] : sz[(e + 1) % 3]) > max_z) continue;
+		s32 dx = a->x - b->x, dy = a->y - b->y, dz = a->z - b->z;
+		if(dx < 0) dx = -dx;
+		if(dy < 0) dy = -dy;
+		if(dz < 0) dz = -dz;
+		bool long_edge = dx > 16384 || dy > 16384 || dz > 16384
+			|| (u32) (dx * dx) + (u32) (dy * dy) + (u32) (dz * dz) > min_len * min_len;
+		if(!long_edge) continue;
+		// Same operand order on both sides of a shared edge.
+		if(a->xy > b->xy || (a->xy == b->xy && a->z > b->z)) {
+			GfxVtx* t = a; a = b; b = t;
+		}
+		between(corner[e * 2 + 1], a, b);
+		split |= 1 << e;
+	}
+	if(!split) return false;
+	flags &= ~PRIM_FLAG_LIGHTED; // colours are already lit
+	for(u32 i = 0; i < edge_split_tri_count[split]; i++) {
+		const u8* t = edge_split_tris[split][i];
+		draw_poly(corner[t[0]], corner[t[1]], corner[t[2]], NULL, flags, storage + V_COUNT, level + 1);
+	}
+	return true;
+}
+
+// Quads (rare in level meshes) keep whole-polygon subdivision.
+[[gnu::noinline]] static bool tessellate_near(bool quad, u32 flags, GfxVtx* storage, u32 level) {
+	if(!quad) return tessellate_triangle_edges(flags, storage, level);
+	if(!(flags & PRIM_FLAG_TESSELLATE)) return false;
+	tessellate_poly(true, flags, storage, level);
+	return true;
+}
+
 DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, const GfxVtx* v2, const GfxVtx* v3, u32 flags, GfxVtx* storage, u32 level) {
 	u32 zuv0 = v0->zuv;
 	u32 zuv1 = v1->zuv;
@@ -668,13 +734,8 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		return;
 	}
 
-	bool needs_vanity_tessellation = !is_ortho
-		&& (flags & PRIM_FLAG_TESSELLATE)
-		&& min_z <= (MAX_TESSELLATION_Z >> level)
-		&& level < VANITY_TESSELLATION;
-
-	if(needs_vanity_tessellation) {
-		tessellate_poly(v3 != NULL, flags, storage, level);
+	if(!is_ortho && level < VANITY_TESSELLATION && min_z <= (MAX_TESSELLATION_Z >> level)
+		&& tessellate_near(v3 != NULL, flags, storage, level)) {
 		return;
 	}
 
