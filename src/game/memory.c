@@ -246,12 +246,26 @@ static void *dynamic_dma_read(const u8 *srcStart, const u8 *srcEnd, u32 side) {
  * address to this block.
  */
 #include <stdio.h>
+static u32 sSegmentLoadSize[32];
+
 void *load_segment(s32 segment, const u8 *srcStart, const u8 *srcEnd, u32 side) {
 	if((uintptr_t) srcStart <= 1) {
 		if((uintptr_t) srcStart == 0) {
 			set_segment_base_addr(segment, (void*) 0);
+			return 0;
 		}
-		return 0;
+		/* romStart == 1: "keep the segment that is already loaded". The intro
+		 * scripts use it with EXIT_AND_EXECUTE because a scriptgeo segment
+		 * cannot know its own disc location at link time. EXIT_AND_EXECUTE
+		 * has just popped the main pool, which also released this segment:
+		 * left freed, the running script was overwritten by the next loads
+		 * (hang when quitting the level select with Z+Start). The segment was
+		 * the first allocation after the matching push, so allocating the
+		 * same size again returns the same block with its contents intact. */
+		void *addr = sSegmentLoadSize[segment] ? main_pool_alloc(sSegmentLoadSize[segment], side) : NULL;
+		assertmf(addr == NULL || addr == get_segment_base_addr(segment), "segment moved",
+		         "segment %02x kept at %p, expected %p\n", segment, addr, get_segment_base_addr(segment));
+		return addr;
 	}
 	//printf("loading segment %02x from %x:%x\n", segment, srcStart, srcEnd);
 	void *addr = dynamic_dma_read(srcStart, srcEnd, side);
@@ -259,6 +273,7 @@ void *load_segment(s32 segment, const u8 *srcStart, const u8 *srcEnd, u32 side) 
 
 	if (addr != NULL) {
 		set_segment_base_addr(segment, addr);
+		sSegmentLoadSize[segment] = ALIGN16(srcEnd - srcStart);
 	}
 	return addr;
 }
