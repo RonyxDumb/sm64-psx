@@ -711,8 +711,12 @@ serve: $(EXE) $(BUILD_DIR)/ext_files.dat
 >	$(V)$(PYTHON) $(TOOLS_DIR)/serial_server.py $(BUILD_DIR)/ext_files.dat $(IP)
 
 .PHONY: all clean distclean default send serve
-# with no prerequisites, .SECONDARY causes no intermediate target to be removed
-.SECONDARY:
+# Keep every generated file. A bare `.SECONDARY:` also did this, but it marks
+# *every* target as intermediate, and GNU make re-walks intermediate chains
+# without memoization: on a clean tree the dependency scan never finished
+# (>10 min at 100% CPU before the first command). `.NOTINTERMEDIATE:` (make
+# 4.4+) keeps the files without that cost; older make just ignores it.
+.NOTINTERMEDIATE:
 
 -include $(DEP_FILES)
 
