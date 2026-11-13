@@ -131,6 +131,9 @@ ALWAYS_INLINE void gfx_packet_end(Packet packet, u32 ot_z) {
 	assert(packet.end <= packet_pool + PACKET_POOL_LEN);
 	assert(ot_z < OT_LEN);
 	u32 packet_size = packet.end - packet.start;
+	/* Linked-list DMA checks GPU readiness only once per node: a node must
+	 * fit the 16-word GP0 FIFO or words are dropped and the GPU can hang. */
+	assert(packet_size <= 16);
 	u32 address = (u32) packet.header & 0x00FFFFFF;
 	if(ot_z == UI_Z && ui_tail) {
 		/* Keep 2D primitives in submission order so a box can be followed

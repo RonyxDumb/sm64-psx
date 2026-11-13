@@ -132,10 +132,26 @@ DL_EXEC_ICACHE_FUNC static void emit_poly_packet(bool quad, s32 sxy3, u32 flags,
 	if((flags & PRIM_FLAG_DECAL) && ot_z > FOREGROUND_BUCKETS + DECAL_Z_BIAS) {
 		ot_z -= DECAL_Z_BIAS;
 	}
-	Packet packet = (is_ortho && !is_2d_background) ? gfx_packet_begin_ui() : gfx_packet_begin();
+	bool ui = is_ortho && !is_2d_background;
+	Packet packet;
 	if((flags & PRIM_FLAG_TEXTURED) && (flags & PRIM_FLAG_DECAL)) {
-		append_poly(&packet, quad, sxy3, flags & ~PRIM_FLAG_TEXTURED, vertices);
+		/* A decal is an untextured base plus a textured overlay (up to 21
+		 * GP0 words). Linked-list DMA only checks GPU readiness per node,
+		 * and the GPU command FIFO holds 16 words: one combined node
+		 * overflowed it, dropped words and left the GPU waiting forever in
+		 * the middle of a quad (hang when Mario's face appears). Emit two
+		 * nodes. Each OT bucket is drawn newest-first, except the UI bucket
+		 * which keeps submission order, so link them accordingly. */
+		bool in_order = ot_z == UI_Z;
+		packet = ui ? gfx_packet_begin_ui() : gfx_packet_begin();
+		append_poly(&packet, quad, sxy3, in_order ? flags & ~PRIM_FLAG_TEXTURED : flags, vertices);
+		gfx_packet_end(packet, ot_z);
+		packet = ui ? gfx_packet_begin_ui() : gfx_packet_begin();
+		append_poly(&packet, quad, sxy3, in_order ? flags : flags & ~PRIM_FLAG_TEXTURED, vertices);
+		gfx_packet_end(packet, ot_z);
+		return;
 	}
+	packet = ui ? gfx_packet_begin_ui() : gfx_packet_begin();
 	append_poly(&packet, quad, sxy3, flags, vertices);
 	gfx_packet_end(packet, ot_z);
 }
