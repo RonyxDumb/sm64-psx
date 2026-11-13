@@ -6,6 +6,7 @@
 #include <ps1/cop0.h>
 #include <vendor/printf.h>
 #include <assert.h>
+#include <PR/os_time.h>
 #include <port/gfx/gfx.h>
 
 #if !defined(SERIAL) && !defined(BENCH)
@@ -18,12 +19,30 @@ static bool cd_inited = false;
 static u32 dat_lba;
 
 #define SECTOR_SIZE 2048
+/* The real CD drive can seek for a second or more. A bounded wait makes
+ * failed handoffs observable rather than leaving "CARICAMENTO" forever. */
+#define CDROM_WAIT_TIMEOUT_US 5000000ULL
 extern u32 gGlobalTimer;
 
+[[gnu::cold]] static void cdrom_timeout(const char* phase, u32 detail) {
+    /* Render diagnostics even in retail builds (asserts are not enough:
+     * release builds still need a visible reason when a CD wait stalls). */
+    gfx_show_message_screen("CDROM TIMEOUT", phase, "");
+    abortf("CDROM timeout at %s (detail=%08x)\n", phase, detail);
+}
+
+static bool cdrom_wait_expired(OSTime start) {
+    return osGetTime() - start >= CDROM_WAIT_TIMEOUT_US;
+}
+
 static bool wait_for_cd_interrupt(u8 expected, u8* result, int result_size) {
+    OSTime start = osGetTime();
 	CDROM_ADDRESS = 1; // interrupt flags are only accessible at index 1
 	while(true) {
 		asm volatile inline("");
+        if(cdrom_wait_expired(start)) {
+            cdrom_timeout("ATTESA INTERRUPT", ((u32) expected << 8) | (CDROM_HINTSTS & 7));
+        }
 		u8 got = CDROM_HINTSTS & 7;
 		if(got) { // supposedly the read is a bit unstable, so read twice just in case
 			got = CDROM_HINTSTS & 7;
@@ -63,16 +82,20 @@ void psx_cd_await_interrupt(u8 expected, u8* result, int result_size) {
 }
 
 static bool try_cd_command(u8 cmd, const u8* args, int arg_count, u8* result, int result_size) {
+    OSTime start = osGetTime();
 	while(CDROM_HSTS & CDROM_HSTS_BUSYSTS) {
 		asm volatile inline("");
+        if(cdrom_wait_expired(start)) cdrom_timeout("CD CMD BUSY", cmd);
 	}
 
 	CDROM_ADDRESS = 1;
 	CDROM_HCLRCTL = 7 | CDROM_HCLRCTL_CLRPRM; // clear interrupts, clear param fifo
 	delayMicroseconds(3);
 
+	start = osGetTime();
 	while(!(CDROM_HSTS & CDROM_HSTS_PRMEMPT)) {
 		asm volatile inline("");
+        if(cdrom_wait_expired(start)) cdrom_timeout("CD PARAM FIFO", cmd);
 	}
 
 	CDROM_ADDRESS = 0;
@@ -141,16 +164,20 @@ void psx_cd_do_read(u8* buf, u32 logical_block, u32 sector_count, u8* excess_buf
 		}
 
 		psx_cd_await_interrupt(1, NULL, 0);
+        OSTime start = osGetTime();
 		do {
 			delayMicroseconds(3);
+            if(cdrom_wait_expired(start)) cdrom_timeout("CD DATA READY", logical_block + sector - 1);
 		} while(!(CDROM_HSTS & CDROM_HSTS_DRQSTS));
 		// sector data ready, now we can start a DMA transfer
 		DMA_MADR(DMA_CDROM) = (u32) cur_dst;
 		DMA_BCR(DMA_CDROM) = SECTOR_SIZE / 4; // the DMA size is in 4-byte words
 		DMA_CHCR(DMA_CDROM) = DMA_CHCR_ENABLE | DMA_CHCR_READ | DMA_CHCR_TRIGGER | DMA_CHCR_MODE_BURST;
 		// now wait for the DMA
+		start = osGetTime();
 		do {
 			delayMicroseconds(10);
+            if(cdrom_wait_expired(start)) cdrom_timeout("CD DMA", logical_block + sector - 1);
 		} while(DMA_CHCR(DMA_CDROM) & DMA_CHCR_ENABLE);
 	}
 	psx_cd_run_cmd(CDROM_PAUSE, NULL, 0, NULL, 0);
