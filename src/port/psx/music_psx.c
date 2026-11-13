@@ -111,20 +111,28 @@ void psx_music_init(void) {
 }
 
 static bool read_position(u32* lba) {
-    u8 status;
-    psx_cd_run_cmd(CDROM_NOP, NULL, 0, &status, 1);
-    return (status & (CDROM_STAT_READ | CDROM_STAT_SEEK)) == CDROM_STAT_READ &&
-           psx_cd_get_audio_lba(lba);
+    /* GetlocP works during seek as well; avoid a preceding NOP command
+     * while ReadS is streaming XA sectors on the shared drive. */
+    return psx_cd_get_audio_lba(lba);
+}
+
+static void cache_resume_position(u32 lba) {
+    if(!playing || playing->track == XA_NONE) {
+        return;
+    }
+    XaTrack track = tracks[playing->track];
+    if(lba < track.start || lba >= track.end) {
+        return;
+    }
+    u32 next = track.start + ((lba - track.start) / XA_INTERVAL + 1) * XA_INTERVAL;
+    playing->lba = next < track.end ? next : track.end - XA_INTERVAL;
 }
 
 static void remember_position(void) {
     u32 lba;
-    if(!reading || !read_position(&lba) || lba < playing->lba) {
-        return;
+    if(reading && read_position(&lba)) {
+        cache_resume_position(lba);
     }
-    XaTrack track = tracks[playing->track];
-    u32 next = track.start + ((lba - track.start) / XA_INTERVAL + 1) * XA_INTERVAL;
-    playing->lba = next < track.end ? next : track.end - XA_INTERVAL;
 }
 
 static void start_read(void) {
@@ -146,7 +154,10 @@ static void pause_read(void) {
 }
 
 void psx_music_suspend_cd(void) {
-    remember_position();
+    /* A level load must stop XA before issuing any further CD commands.
+     * The music tick already checkpoints playback position, so querying
+     * GetlocP here (while a loading screen is on display) is unnecessary
+     * and risks stalling the handoff if an audio/data IRQ is pending. */
     pause_read();
 }
 
@@ -389,10 +400,13 @@ void psx_music_tick(void) {
     }
     poll_countdown = XA_POLL_FRAMES - 1;
     u32 lba;
-    if(!read_position(&lba) || lba < playing->lba) {
+    if(!read_position(&lba)) {
         return;
     }
     XaTrack track = tracks[playing->track];
+    if(lba < track.start) {
+        return;
+    }
     if(lba >= track.end) {
         if(playing->loop) {
             playing->lba = track.start;
@@ -412,8 +426,12 @@ void psx_music_tick(void) {
                 level.lba = new_track.start;
             }
             start_read();
+            return;
         }
     }
+    /* Checkpoint the last XA position during normal audio ticks rather
+     * than synchronously querying the drive on the data-loading path. */
+    cache_resume_position(lba);
 }
 
 #endif

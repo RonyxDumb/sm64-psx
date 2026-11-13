@@ -93,12 +93,17 @@ static u32 from_bcd(u8 value) {
 }
 
 bool psx_cd_get_audio_lba(u32* lba) {
+	/* Physical SubQ position works during XA streaming and seeks. GetlocL
+	 * can be delayed behind pending data INT1s and is not suitable for
+	 * polling the music position while a scene requests a CD read. */
 	u8 location[8];
-	if(!try_cd_command(CDROM_GETLOCL, NULL, 0, location, sizeof(location))) {
+	if(!try_cd_command(CDROM_GETLOCP, NULL, 0, location, sizeof(location))) {
 		return false;
 	}
-	u32 sector = (from_bcd(location[0]) * 60 + from_bcd(location[1])) * 75 +
-	             from_bcd(location[2]);
+	/* GetlocP reports track-relative MSF at 2..4 and disc-absolute MSF
+	 * at 5..7. The latter is what the XA stream table uses. */
+	u32 sector = (from_bcd(location[5]) * 60 + from_bcd(location[6])) * 75 +
+	             from_bcd(location[7]);
 	if(sector < 150) {
 		return false;
 	}
