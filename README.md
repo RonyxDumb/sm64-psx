@@ -58,14 +58,25 @@ The [Psy-Q run-time overview](https://psx.arthus.net/sdk/Psy-Q/DOCS/LibOver47.pd
 
 ### GitHub Actions: build images for the PlayStation emulator
 
-The workflow [SM64-PSX emulator builds and RGB555 checks](.github/workflows/light-color-test.yml)
-runs on every push to `main` and on manual dispatch. It runs conversion and
-MIPS syntax checks, then builds **two PS1 disc images** using the repository's
-Dockerfile: RGB888 (default lighting) and RGB555 (`LIGHTS_15BIT=1`).
-Each successful build uploads `sm64.iso`, `sm64.cue`, the optional ELF
-debug image and SHA-256 checksums as an Actions artifact (retained for 3 days).
-Open the `.cue` file from the extracted artifact in DuckStation or PCSX-Redux.
-Both disc images include the 38 remastered tracks from the checkout.
+The workflow [SM64-PSX retail 2MB and dev 8MB builds](.github/workflows/light-color-test.yml)
+runs on every push to `main` and on manual dispatch. After the shared
+conversion/regression checks, it builds **exactly two PS1 disc images** with
+the repository Dockerfile:
+
+- `sm64-psx-us-retail-2mb`: `DEBUG=0 BIG_RAM=0 LIGHTS_15BIT=0`.
+  Optimized release intended for standard retail PS1 hardware (2 MiB RAM).
+- `sm64-psx-us-dev-8mb`: `DEBUG=1 BIG_RAM=1 LIGHTS_15BIT=0`.
+  Instrumented debug build that **requires 8 MiB RAM**; for dev consoles and
+  emulators with an 8 MiB RAM expansion enabled, **not** retail hardware.
+
+Both use RGB888 light values (`LIGHTS_15BIT=0`) to retain source lighting
+precision. RGB555 reduces light color precision but does not reduce asset
+memory usage, so there is no memory-saving reason to use it for retail.
+
+Each build uploads `sm64.iso`, `sm64.cue`, `sm64.elf` and SHA-256 checksums
+as its own Actions artifact (retained for 3 days). Open the extracted
+`sm64.cue` in DuckStation or PCSX-Redux. Both discs include the bundled
+38 remastered XA tracks. Passing CI does not guarantee a bug-free playthrough.
 
 **Required one-time setup:** GitHub runners cannot access an N64 ROM stored in
 a local folder or the ChatGPT Library. Add an Actions repository secret named
