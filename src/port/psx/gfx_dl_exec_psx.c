@@ -127,31 +127,81 @@ void gfx_reset_dl_exec() {
 	}
 }
 
+static u32 texture_window_period(u32 size) {
+	u32 period = 8;
+	while(period < size) period *= 2;
+	return period;
+}
+
+/* Legacy (non-native) vertices store each UV wrapped to 8 bits on its own.
+ * A polygon whose texels cross a multiple of 256 then interpolates backwards
+ * across the whole range (e.g. 250 -> 4), squeezing several texture repeats
+ * into it: the "streaky" castle walls and hills. Rebuild the polygon's real
+ * UV interval along the shortest wrap (as between_uv()/clip_lerp_uv() do),
+ * then shift it by a multiple of the texture-window period so it starts in
+ * [0, period). The texture window keeps the pattern phase. Valid while a
+ * polygon spans under 128 texels, which offline tessellation ensures. */
+[[gnu::noinline]] static const GfxVtx* normalize_legacy_uvs(GfxVtx* v, const GfxVtx* src, u32 count, const TexHeader* tex) {
+	for(u32 i = 0; i < count; i++) v[i] = src[i];
+	for(u32 axis = 0; axis < 2; axis++) {
+		s32 raw_lo = 255, raw_hi = 0;
+		for(u32 i = 0; i < count; i++) {
+			s32 value = v[i].uv_arr[axis];
+			if(value < raw_lo) raw_lo = value;
+			if(value > raw_hi) raw_hi = value;
+		}
+		// A raw span up to 128 is already correct (this also keeps clamped
+		// 0..128 coordinates of 128-texel textures untouched).
+		if(raw_hi - raw_lo <= 128) continue;
+		s32 period = texture_window_period(axis ? tex->height : tex->width);
+		s32 base = v[0].uv_arr[axis];
+		s32 unwrapped[4];
+		s32 lo = base;
+		for(u32 i = 0; i < count; i++) {
+			s32 value = base + (s8) (u8) (v[i].uv_arr[axis] - base);
+			unwrapped[i] = value;
+			if(value < lo) lo = value;
+		}
+		s32 shift = lo & ~(period - 1); // floor to a whole period, also below zero
+		for(u32 i = 0; i < count; i++) {
+			v[i].uv_arr[axis] = (u8) (unwrapped[i] - shift);
+		}
+	}
+	return v;
+}
+
+/* A decal is an untextured base plus a textured overlay (up to 21 GP0
+ * words). Linked-list DMA only checks GPU readiness per node, and the GPU
+ * command FIFO holds 16 words: one combined node overflowed it, dropped
+ * words and left the GPU waiting forever in the middle of a quad (hang when
+ * Mario's face appears). Emit one node per pass. Each OT bucket is drawn
+ * newest-first, except the UI bucket which keeps submission order, so link
+ * the base accordingly. Kept out of the icache-resident section. */
+[[gnu::noinline]] static void emit_decal_nodes(bool quad, s32 sxy3, u32 flags, const GfxVtx* vertices, u32 ot_z, bool ui) {
+	u32 base = flags & ~PRIM_FLAG_TEXTURED;
+	bool in_order = ot_z == UI_Z;
+	for(u32 pass = 0; pass < 2; pass++) {
+		Packet packet = gfx_packet_begin_for(ui);
+		append_poly(&packet, quad, sxy3, (pass == 0) == in_order ? base : flags, vertices);
+		gfx_packet_end(packet, ot_z);
+	}
+}
+
 DL_EXEC_ICACHE_FUNC static void emit_poly_packet(bool quad, s32 sxy3, u32 flags, const GfxVtx* vertices, u32 depth) {
+	GfxVtx normalized[4];
+	if(!native_uv && tex_ptr && (flags & PRIM_FLAG_TEXTURED)) {
+		vertices = normalize_legacy_uvs(normalized, vertices, quad ? 4 : 3, (const TexHeader*) tex_ptr);
+	}
 	u32 ot_z = is_ortho ? depth : depth / (MAX_Z / Z_BUCKETS) + FOREGROUND_BUCKETS;
 	if((flags & PRIM_FLAG_DECAL) && ot_z > FOREGROUND_BUCKETS + DECAL_Z_BIAS) {
 		ot_z -= DECAL_Z_BIAS;
 	}
 	bool ui = is_ortho && !is_2d_background;
-	Packet packet;
 	if((flags & PRIM_FLAG_TEXTURED) && (flags & PRIM_FLAG_DECAL)) {
-		/* A decal is an untextured base plus a textured overlay (up to 21
-		 * GP0 words). Linked-list DMA only checks GPU readiness per node,
-		 * and the GPU command FIFO holds 16 words: one combined node
-		 * overflowed it, dropped words and left the GPU waiting forever in
-		 * the middle of a quad (hang when Mario's face appears). Emit two
-		 * nodes. Each OT bucket is drawn newest-first, except the UI bucket
-		 * which keeps submission order, so link them accordingly. */
-		bool in_order = ot_z == UI_Z;
-		packet = ui ? gfx_packet_begin_ui() : gfx_packet_begin();
-		append_poly(&packet, quad, sxy3, in_order ? flags & ~PRIM_FLAG_TEXTURED : flags, vertices);
-		gfx_packet_end(packet, ot_z);
-		packet = ui ? gfx_packet_begin_ui() : gfx_packet_begin();
-		append_poly(&packet, quad, sxy3, in_order ? flags : flags & ~PRIM_FLAG_TEXTURED, vertices);
-		gfx_packet_end(packet, ot_z);
+		emit_decal_nodes(quad, sxy3, flags, vertices, ot_z, ui);
 		return;
 	}
-	packet = ui ? gfx_packet_begin_ui() : gfx_packet_begin();
+	Packet packet = gfx_packet_begin_for(ui);
 	append_poly(&packet, quad, sxy3, flags, vertices);
 	gfx_packet_end(packet, ot_z);
 }
@@ -160,6 +210,12 @@ typedef struct {
 	s32 x, y, z;
 	Color color;
 	u8 u, v;
+	/* GTE screen position of an original (unclipped) vertex. Shared edges
+	 * must project bit-identically in neighbouring polygons, otherwise the
+	 * rasterizer leaves single-pixel cracks between a clipped polygon and
+	 * an unclipped one. Intersection vertices have gte_sxy_valid clear. */
+	bool gte_sxy_valid;
+	s32 gte_sxy;
 } ClipVertex;
 
 enum { CLIP_NEAR, CLIP_FAR, CLIP_LEFT, CLIP_RIGHT, CLIP_TOP, CLIP_BOTTOM, CLIP_PLANE_COUNT };
@@ -207,19 +263,28 @@ static ClipVertex clip_intersection(const ClipVertex* outside, const ClipVertex*
 		},
 		.u = clip_lerp_uv(outside->u, inside->u, fraction),
 		.v = clip_lerp_uv(outside->v, inside->v, fraction),
+		.gte_sxy_valid = false,
 	};
 }
 
 static ClipVertex clip_load_vertex(const GfxVtx* position, const GfxVtx* material) {
 	gte_setV0(position->x, position->y, position->z);
 	gte_commandNoNop(GTE_CMD_MVMVA | GTE_SF | GTE_V_V0 | GTE_MX_RT | GTE_CV_TR);
+	s32 x = (s32) gte_getDataReg(GTE_MAC1);
+	s32 y = (s32) gte_getDataReg(GTE_MAC2);
+	s32 z = (s32) gte_getDataReg(GTE_MAC3);
+	// Same projection as RTPT in draw_poly(); only used if the vertex
+	// survives clipping, i.e. it lies inside every plane.
+	gte_commandNoNop(GTE_CMD_RTPS | GTE_SF);
 	return (ClipVertex) {
-		.x = (s32) gte_getDataReg(GTE_MAC1),
-		.y = (s32) gte_getDataReg(GTE_MAC2),
-		.z = (s32) gte_getDataReg(GTE_MAC3),
+		.x = x,
+		.y = y,
+		.z = z,
 		.color = material->color,
 		.u = material->u,
 		.v = material->v,
+		.gte_sxy_valid = true,
+		.gte_sxy = (s32) gte_getDataReg(GTE_SXY2),
 	};
 }
 
@@ -267,6 +332,10 @@ static s32 clip_project(s32 coord, s32 z, s32 focal, s32 half_size) {
 	s32 xy[3 + CLIP_PLANE_COUNT];
 	for(u32 i = 0; i < count; i++) {
 		// Rounding the fixed-point intersection can move Z by one unit.
+		if(input[i].gte_sxy_valid) {
+			xy[i] = input[i].gte_sxy;
+			continue;
+		}
 		s32 z = input[i].z < near_z ? near_z : input[i].z;
 		xy[i] = gp0_xy(clip_project(input[i].x, z, focal, XRES / 2),
 		               clip_project(input[i].y, z, focal, YRES / 2));

@@ -123,6 +123,11 @@ ALWAYS_INLINE Packet gfx_packet_begin_ui() {
 	return gfx_packet_begin_with_reserve(PACKET_RESERVE_WORDS);
 }
 
+// One inlined copy for callers that choose the budget at run time.
+ALWAYS_INLINE Packet gfx_packet_begin_for(bool ui) {
+	return gfx_packet_begin_with_reserve(PACKET_RESERVE_WORDS + (ui ? 0 : PACKET_HUD_RESERVE_WORDS));
+}
+
 ALWAYS_INLINE void gfx_packet_end(Packet packet, u32 ot_z) {
 	if(packet.header == discarded_packet) {
 		return; // drop safely, do not link this packet into the GPU OT
