@@ -4,6 +4,7 @@ import argparse
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import bisect
 import re
 import struct
 from typing import NamedTuple
@@ -360,6 +361,93 @@ def split_triangle(triangle, split_edges, world_edge_sq):
         yield from split_triangle(Triangle(child, triangle.repeat, triangle.flags), split_edges, world_edge_sq)
 
 
+def lerp_vertex(a, b, t, xyz):
+    def mix(left, right):
+        return tuple(round(x + (y - x) * t) for x, y in zip(left, right))
+    return Vertex(xyz, mix(a.uv, b.uv), mix(a.rgb, b.rgb))
+
+
+def repair_t_junctions(lists):
+    """Split triangles at vertices of the same mesh lying on their edges.
+
+    N64 level meshes contain T-junctions (79 in castle_grounds area 1/1).
+    The N64 rasterizer's sub-pixel precision hides them; the PS1 rounds
+    vertices to whole pixels, so the sky shows through as dotted cracks.
+    The inserted vertex reuses the neighbour's exact position, so both
+    sides project to the same pixel; UV and colour are interpolated along
+    the split edge. Winding is preserved.
+    """
+    points = sorted({v.xyz for events in lists.values() for item in events
+                     if isinstance(item, Triangle) for v in item.vertices})
+    xs = [p[0] for p in points]
+
+    def on_edge(a, b):
+        lo = bisect.bisect_left(xs, min(a[0], b[0]) - 1)
+        hi = bisect.bisect_right(xs, max(a[0], b[0]) + 1)
+        ab = [y - x for x, y in zip(a, b)]
+        length_sq = sum(d * d for d in ab)
+        if not length_sq:
+            return []
+        found = []
+        for p in points[lo:hi]:
+            if p == a or p == b:
+                continue
+            if not (min(a[1], b[1]) - 1 <= p[1] <= max(a[1], b[1]) + 1
+                    and min(a[2], b[2]) - 1 <= p[2] <= max(a[2], b[2]) + 1):
+                continue
+            ap = [y - x for x, y in zip(a, p)]
+            t = sum(u * v for u, v in zip(ap, ab)) / length_sq
+            if not 0.0 < t < 1.0:
+                continue
+            cross = (ap[1] * ab[2] - ap[2] * ab[1], ap[2] * ab[0] - ap[0] * ab[2], ap[0] * ab[1] - ap[1] * ab[0])
+            if sum(c * c for c in cross) < length_sq:  # distance from the edge < 1 unit
+                found.append((t, p))
+        return sorted(found)
+
+    result = {}
+    for name, events in lists.items():
+        out = result[name] = []
+        for item in events:
+            if not isinstance(item, Triangle):
+                out.append(item)
+                continue
+            # Only (pieces of) the original edges can carry T-junctions; the
+            # fan diagonals added here are interior and are not re-checked.
+            queue = [(item, 0b111)]
+            while queue:
+                triangle, pending = queue.pop()
+                v = triangle.vertices
+                for edge in range(3):
+                    if not pending & (1 << edge):
+                        continue
+                    a, b, c = v[edge], v[(edge + 1) % 3], v[(edge + 2) % 3]
+                    hits = on_edge(a.xyz, b.xyz)
+                    if not hits:
+                        pending &= ~(1 << edge)
+                        continue
+                    chain = [a] + [lerp_vertex(a, b, t, p) for t, p in hits] + [b]
+                    after = pending & ~(1 << edge)
+                    next_edge = 1 << ((edge + 1) % 3)  # b -> c
+                    prev_edge = 1 << ((edge + 2) % 3)  # c -> a
+                    for index, (left, right) in enumerate(zip(chain, chain[1:])):
+                        child = (left, right, c)
+                        if not face_area_sq(*child):
+                            continue
+                        # child edges: 0 = piece of this edge (done),
+                        # 1 = right -> c (original only for the last piece),
+                        # 2 = c -> left (original only for the first piece).
+                        mask = 0
+                        if index == len(chain) - 2 and after & next_edge:
+                            mask |= 0b010
+                        if index == 0 and after & prev_edge:
+                            mask |= 0b100
+                        queue.append((Triangle(child, triangle.repeat, triangle.flags), mask))
+                    break
+                else:
+                    out.append(triangle)
+    return result
+
+
 def tessellate(lists, world_edge, max_triangles=None):
     world_edge_sq = None if world_edge is None else world_edge ** 2
     split_edges = set()
@@ -527,6 +615,7 @@ def compile_mesh(source, textures, combiners, defines=(), shared_lights=None, gr
     lights = (shared_lights or {}) | read_lights(source)
     programs = {a["name"]: compile_list(a["name"], lists, batches, lights, textures, combiners)
                 for a in roots}
+    programs = repair_t_junctions(programs)
     # Keep each generated mesh within the original overlay allocation.
     old_size = sum(len(rows) * 16 for rows in batches.values())
     old_size += sum(48 if name == "gsDPLoadTextureBlock" else 8
@@ -536,6 +625,8 @@ def compile_mesh(source, textures, combiners, defines=(), shared_lights=None, gr
         result = tessellate(programs, edge_limit, budget // 4)
         if result is None:
             return None, 0
+        # Thin triangles may refuse a split their neighbour made.
+        result = repair_t_junctions(result)
         output = ['#include <port/gfx/gfx_internal.h>\n#include <port/gfx/gfx_light_color.h>\n', remainder]
         native_size = 0
         for a in roots:
