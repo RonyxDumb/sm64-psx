@@ -23,6 +23,8 @@ IGNORED = {
 # edges required by the GPU's UV range, so dense meshes can still run natively.
 WORLD_EDGE_LIMITS = (320, 448, 640, 896, 1280, 2048, 4096, None)
 VERTICES_PER_BATCH = 256
+# Polygons whose UV span exceeds this are split offline (8-bit PS1 UVs).
+UV_SPLIT_SPAN = 255
 
 
 class UnsupportedMesh(ValueError):
@@ -329,7 +331,7 @@ def split_triangle(triangle, split_edges, world_edge_sq):
                        for x, y, period in zip(a.uv, b.uv, triangle.repeat) if period), default=0)
         if edge in split_edges:
             priority = 3
-        elif uv_span > 255:
+        elif uv_span > UV_SPLIT_SPAN:
             priority = 2
         elif textured and world_edge_sq is not None and length_sq > world_edge_sq:
             priority = 1
@@ -392,6 +394,39 @@ def uv_offsets(vertices, repeat):
     return tuple(result)
 
 
+# A batch marked SEG_VTX_WRAPPED stores every UV modulo 256. The runtime
+# rebuilds each polygon's interval along the shortest wrap and shifts it by
+# whole texture periods (gfx_dl_exec_psx.c: normalize_legacy_uvs), which is
+# exact while a polygon spans at most 127 texels per axis. Such batches need
+# no shared 256-texel UV window, so vertices are shared like on the N64.
+SEG_VTX_WRAPPED = 0x100
+
+
+def is_sliver(triangle):
+    # Height below one model unit over its longest edge (e.g. WF area 1/1
+    # contains a 0.45-unit-high, 2840-unit-long triangle with a 320-texel
+    # UV span): it never covers a pixel, so it can be dropped.
+    a, b, c = triangle.vertices
+    longest = max(sum((x - y) ** 2 for x, y in zip(p.xyz, q.xyz)) for p, q in ((a, b), (b, c), (c, a)))
+    return longest > 0 and face_area_sq(a, b, c) < longest  # (2 * area)^2 < edge^2 <=> height < 1
+
+
+def wrapped_ok(triangle):
+    for axis, period in enumerate(triangle.repeat):
+        values = [point.uv[axis] for point in triangle.vertices]
+        if period:
+            if max(values) - min(values) > 127:
+                return False
+        elif min(values) < 0 or max(values) > 255:
+            return False
+    return True
+
+
+def wrapped_vertex(point, repeat):
+    uv = tuple(coord % 256 if period else coord for coord, period in zip(point.uv, repeat))
+    return Vertex(point.xyz, uv, point.rgb)
+
+
 def emit_list(name, declaration, events):
     source = []
     stream = []
@@ -400,6 +435,7 @@ def emit_list(name, declaration, events):
     batch_index = 0
     repeat = None
     flags = None
+    wrapped = None
     size = 0
 
     def flush():
@@ -409,7 +445,7 @@ def emit_list(name, declaration, events):
         symbol = f"{name}_psx_vertices_{batch_index}"
         batch_index += 1
         source.append(f"static const GfxVtx {symbol}[] = {{\n")
-        offset_u, offset_v = uv_offsets(batch, repeat)
+        offset_u, offset_v = (0, 0) if wrapped else uv_offsets(batch, repeat)
         size += len(batch) * 12
         for point in batch:
             x, y, z = point.xyz
@@ -417,7 +453,7 @@ def emit_list(name, declaration, events):
             r, g, b = (c & 255 for c in point.rgb)
             source.append(f"    {{.x={x}, .y={y}, .z={z}, .u={u}, .v={v}, .color={{.r={r}, .g={g}, .b={b}}}}},\n")
         source.append("};\n")
-        stream.extend((op("SEG_VTX", flags), pointer(symbol)))
+        stream.extend((op("SEG_VTX", f"{flags} | {SEG_VTX_WRAPPED:#x}" if wrapped else flags), pointer(symbol)))
         stream.extend(batch_commands)
         batch.clear()
         batch_commands.clear()
@@ -428,14 +464,18 @@ def emit_list(name, declaration, events):
             # Keep their original order inside a compatible batch.
             (batch_commands if batch else stream).extend(item)
             continue
-        points = item.vertices
+        tri_wrapped = wrapped_ok(item)
+        points = tuple(wrapped_vertex(point, item.repeat) for point in item.vertices) if tri_wrapped else item.vertices
         combined = batch.keys() | set(points)
-        if (repeat != item.repeat or flags != item.flags or len(combined) > VERTICES_PER_BATCH
-                or uv_offsets(combined, repeat) is None):
+        if (tri_wrapped != wrapped or flags != item.flags or len(combined) > VERTICES_PER_BATCH
+                or (not tri_wrapped and (repeat != item.repeat or uv_offsets(combined, item.repeat) is None))):
             flush()
             repeat = item.repeat
             flags = item.flags
-        if uv_offsets(points, repeat) is None:
+            wrapped = tri_wrapped
+        if not tri_wrapped and uv_offsets(points, repeat) is None:
+            if is_sliver(item):
+                continue  # invisible, and too thin to split into 8-bit UV spans
             raise UnsupportedMesh("UV span exceeds PS1 interpolation range")
         i, j, k = (batch.setdefault(point, len(batch)) for point in points)
         batch_commands.append(op("STATIC_TRI", f"({i} << 16) | ({j} << 8) | {k}"))
@@ -450,7 +490,25 @@ def emit_list(name, declaration, events):
     return "".join(source), size + len(stream) * 4
 
 
-def compile_mesh(source, textures, combiners, defines=(), shared_lights=None):
+# Native meshes are always preferred over the run-time N64 path (offline
+# tessellation, crack-free shared edges, exact 8-bit UVs). When no
+# tessellation level fits the original N64 size, accept the coarsest native
+# version up to this growth factor of the level's mesh data. Measured free
+# main-pool RAM after loading each level is at least ~130 KiB, except
+# castle_inside (~3 KiB), which must not grow.
+# Small meshes may also grow by a fixed amount (huge UV spans on a few
+# triangles can multiply a tiny mesh several times over).
+DEFAULT_GROWTH_CAP = (4.0, 12 * 1024)
+LEVEL_GROWTH_CAP = {"castle_inside": (1.0, 0)}
+
+
+def growth_cap_for(path):
+    parts = Path(path).parts
+    level = parts[parts.index("levels") + 1] if "levels" in parts else None
+    return LEVEL_GROWTH_CAP.get(level, DEFAULT_GROWTH_CAP)
+
+
+def compile_mesh(source, textures, combiners, defines=(), shared_lights=None, growth_cap=(1.0, 0)):
     source = select_geometry_variant(source, defines)
     arrays = list(ARRAY.finditer(source))
     lists = {a["name"]: list(commands(a["body"])) for a in arrays if a["kind"] == "Gfx"}
@@ -473,12 +531,11 @@ def compile_mesh(source, textures, combiners, defines=(), shared_lights=None):
     old_size = sum(len(rows) * 16 for rows in batches.values())
     old_size += sum(48 if name == "gsDPLoadTextureBlock" else 8
                     for items in lists.values() for name, _ in items)
-    native_size = 0
-    for edge_limit in WORLD_EDGE_LIMITS:
+    def build(edge_limit, budget):
         # Every triangle needs at least one command word, before vertices.
-        result = tessellate(programs, edge_limit, old_size // 4)
+        result = tessellate(programs, edge_limit, budget // 4)
         if result is None:
-            continue
+            return None, 0
         output = ['#include <port/gfx/gfx_internal.h>\n#include <port/gfx/gfx_light_color.h>\n', remainder]
         native_size = 0
         for a in roots:
@@ -486,9 +543,22 @@ def compile_mesh(source, textures, combiners, defines=(), shared_lights=None):
             compiled, size = emit_list(a["name"], declaration, result[a["name"]])
             output.append(compiled)
             native_size += size
-        if native_size <= old_size:
-            return "".join(output)
-    raise UnsupportedMesh(f"native geometry would increase the overlay ({old_size} to {native_size} bytes)")
+        return "".join(output), native_size
+
+    # Finest tessellation that keeps the original size (best affine quality).
+    native_size = 0
+    for edge_limit in WORLD_EDGE_LIMITS:
+        output, native_size = build(edge_limit, old_size)
+        if output is not None and native_size <= old_size:
+            return output
+    # Otherwise the coarsest native mesh within the level's growth cap.
+    ratio, extra = growth_cap
+    budget = max(int(old_size * ratio), old_size + extra)
+    for edge_limit in reversed(WORLD_EDGE_LIMITS):
+        output, native_size = build(edge_limit, budget)
+        if output is not None and native_size <= budget:
+            return output
+    raise UnsupportedMesh(f"native geometry would exceed the growth cap ({old_size} to {native_size} bytes, cap {growth_cap})")
 
 
 def main():
@@ -516,7 +586,8 @@ def main():
             break
     try:
         compiled = compile_mesh(source, textures, read_combiners(),
-                                {definition.split("=")[0] for definition in args.D}, shared_lights)
+                                {definition.split("=")[0] for definition in args.D}, shared_lights,
+                                growth_cap_for(model))
     except (ValueError, IndexError) as exc:
         print(f"PS1 static mesh fallback for {model}: {exc}")
         compiled = source

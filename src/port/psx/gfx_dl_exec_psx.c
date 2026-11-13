@@ -1152,7 +1152,7 @@ DL_EXEC_ICACHE_FUNC void gfx_run_compiled_dl(dl_t* dl) {
 			}
 			case DL_CMD_SEG_VTX: {
 				vertices = segmented_to_virtual((void*) *dl++);
-				native_uv = true;
+				native_uv = !(cmd & 0x100); // SEG_VTX_WRAPPED: UVs stored modulo 256
 				native_flags = cmd;
 				break;
 			}
