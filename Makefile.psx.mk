@@ -685,10 +685,13 @@ $(ELF): $(SEG_FILES_WITH_GEO) $(O_FILES) $(GODDARD_O_FILES) $(LIBC_O_FILES) $(BU
 >	$(V)$(OBJCOPY) -R.scratchpad -R.bss -R.sbss $@.tmp
 >	@mv $@.tmp $@
 
+# The NTSC-U region marker in the EXE header is what emulators (e.g. Mednafen)
+# use to identify the disc region; without it the disc is treated as unlicensed.
 $(EXE): $(ELF)
 >	@$(PRINT) "$(GREEN)Converting to executable: $(BLUE)$@ $(NO_COL)\n"
 >	$(V)stack_top=$$($(NM) $< | awk '$$3 == "_stackTop" {print "0x" $$1}'); \
->	test -n "$$stack_top" && $(PYTHON) ps1-bare-metal/convertExecutable.py --set-sp "$$stack_top" $< $@
+>	test -n "$$stack_top" && $(PYTHON) ps1-bare-metal/convertExecutable.py --set-sp "$$stack_top" \
+>		--region-str "Sony Computer Entertainment Inc. for North America area" $< $@
 
 tags: $(C_FILES)
 >	@ctags $^
@@ -696,9 +699,10 @@ tags: $(C_FILES)
 $(BUILD_DIR)/psx_iso.xml: psx_iso.xml
 >	$(V)cp $< $@
 
-$(ISO_OUT) $(CUE_OUT) &: $(EXE) $(BUILD_DIR)/bgm/pack.xa $(BUILD_DIR)/bgm/info.dat $(BUILD_DIR)/psx_iso.xml system.cnf
+$(ISO_OUT) $(CUE_OUT) &: $(EXE) $(BUILD_DIR)/bgm/pack.xa $(BUILD_DIR)/bgm/info.dat $(BUILD_DIR)/psx_iso.xml system.cnf $(TOOLS_DIR)/psx_system_area.py
 >	@$(PRINT) "$(GREEN)Making iso file: $(BLUE)$@$(NO_COL)\n"
 >	$(V)cd $(BUILD_DIR) && ../../$(MKPSXISO) -y ./psx_iso.xml
+>	$(V)$(PYTHON) $(TOOLS_DIR)/psx_system_area.py $(ISO_OUT)
 
 NOPS ?= nops
 
