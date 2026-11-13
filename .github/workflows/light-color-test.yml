@@ -1,4 +1,4 @@
-name: SM64-PSX emulator builds and RGB555 checks
+name: SM64-PSX retail 2MB and dev 8MB builds
 
 on:
   push:
@@ -11,16 +11,16 @@ permissions:
 jobs:
   conversion:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        rgb555: [0, 1]
     steps:
       - uses: actions/checkout@v4
-      - name: Compile conversion tests
-        run: cc -std=c11 -Wall -Wextra -Werror -I. -DPSX_LIGHTS_RGB555=${{ matrix.rgb555 }} tests/light_rgb555_test.c -o /tmp/light_rgb555_test
-      - name: Run conversion tests
-        run: /tmp/light_rgb555_test
+      - name: Verify RGB888 and RGB555 conversion
+        shell: bash
+        run: |
+          set -euo pipefail
+          for rgb555 in 0 1; do
+            cc -std=c11 -Wall -Wextra -Werror -I. -DPSX_LIGHTS_RGB555="$rgb555" tests/light_rgb555_test.c -o /tmp/light_rgb555_test
+            /tmp/light_rgb555_test
+          done
       - name: Validate PS1 CD bank packing
         run: python3 tests/texture_bank_test.py
       - name: Validate PS1 sound-effect timing and XA track packing
@@ -52,14 +52,20 @@ jobs:
       - name: Check PS1 dialog and decal regression invariants
         run: python3 tests/psx_render_regressions_test.py
   build-playstation-disc:
-    name: "Build PS1 ISO (LIGHTS_15BIT=${{ matrix.rgb555 }})"
+    name: "Build PS1 ISO (${{ matrix.profile }})"
     needs: [conversion]
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        rgb555: [0, 1]
+        include:
+          - profile: retail-2mb
+            debug: 0
+            big_ram: 0
+          - profile: dev-8mb
+            debug: 1
+            big_ram: 1
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -126,9 +132,9 @@ jobs:
             --workdir /project \
             sm64-psx-ci:latest \
             sh -ec "chmod +x tools/build/* && \
-              make VERSION=us LIGHTS_15BIT=${{ matrix.rgb555 }} COLOR=0 build/us_psx/tex_pack && \
-              make VERSION=us LIGHTS_15BIT=${{ matrix.rgb555 }} COLOR=0 MAKE_EXT_FILES=1 build/us_psx/ext_files.dat && \
-              make VERSION=us LIGHTS_15BIT=${{ matrix.rgb555 }} COLOR=0"
+              make VERSION=us DEBUG=${{ matrix.debug }} BIG_RAM=${{ matrix.big_ram }} LIGHTS_15BIT=0 COLOR=0 build/us_psx/tex_pack && \
+              make VERSION=us DEBUG=${{ matrix.debug }} BIG_RAM=${{ matrix.big_ram }} LIGHTS_15BIT=0 COLOR=0 MAKE_EXT_FILES=1 build/us_psx/ext_files.dat && \
+              make VERSION=us DEBUG=${{ matrix.debug }} BIG_RAM=${{ matrix.big_ram }} LIGHTS_15BIT=0 COLOR=0"
 
       - name: Check emulator-ready disc files
         shell: bash
@@ -152,7 +158,7 @@ jobs:
       - name: Attach PlayStation image for emulator testing
         uses: actions/upload-artifact@v4
         with:
-          name: "sm64-psx-us-rgb${{ matrix.rgb555 == 1 && '555' || '888' }}"
+          name: "sm64-psx-us-${{ matrix.profile }}"
           if-no-files-found: error
           retention-days: 3
           compression-level: 0
