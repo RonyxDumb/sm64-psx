@@ -133,6 +133,12 @@ static int exchangePacket(
 	// Reset the interrupt flag and assert the DTR signal to tell the controller
 	// or memory card that we're about to send a packet. Devices may take some
 	// time to prepare for incoming bytes so we need a small delay here.
+	// Pop the RX data register once before selecting the device. After an
+	// SIO reset (or an aborted exchange that never read its reply) the
+	// receiver is only armed again by a read of SIO_DATA, so every reply byte
+	// would be dropped and the pad never detected. With RXEN clear this read
+	// does not clock the bus; it is harmless when the FIFO is already empty.
+	(void) SIO_DATA(0);
 	IRQ_STAT     = ~(1 << IRQ_SIO0);
 	SIO_CTRL(0) |= SIO_CTRL_DTR | SIO_CTRL_ACKNOWLEDGE;
 	delayMicroseconds(DTR_DELAY);
@@ -204,7 +210,11 @@ void controller_backend_read(OSContPad* pad, u32 port) {
 		SIO_CTRL(0) = SIO_CTRL_RESET;
 		SIO_MODE(0) = SIO_MODE_BAUD_DIV1 | SIO_MODE_DATA_8;
 		SIO_BAUD(0) = F_CPU / 250000;
-		SIO_CTRL(0) = SIO_CTRL_TX_ENABLE | SIO_CTRL_RX_ENABLE | SIO_CTRL_DSR_IRQ_ENABLE;
+		// Same configuration as the BIOS pad driver (0x1003 once DTR is set).
+		// RXEN must stay clear: it forces a standalone receive that clocks
+		// the pad with zero bits and desynchronizes the packet. Replies are
+		// received automatically while each byte is transmitted.
+		SIO_CTRL(0) = SIO_CTRL_TX_ENABLE | SIO_CTRL_DSR_IRQ_ENABLE;
 		inited = true;
 	}
 
