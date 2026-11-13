@@ -151,7 +151,13 @@ class RendererRegressionTests(unittest.TestCase):
         modulation = (ROOT / "src/port/gfx/gfx_texture_modulation.h").read_text()
         self.assertIn("if(decal_overlay)", modulation)
         self.assertIn("return 0x00808080u;", modulation)
-        self.assertIn("append_poly(&packet, quad, sxy3, flags & ~PRIM_FLAG_TEXTURED, vertices)", renderer)
+        # The untextured base pass is still drawn, but as its own GPU node:
+        # one combined node overflowed the 16-word GP0 FIFO and hung the GPU.
+        self.assertIn("u32 base = flags & ~PRIM_FLAG_TEXTURED;", renderer)
+        self.assertIn("append_poly(&packet, quad, sxy3, (pass == 0) == in_order ? base : flags, vertices);", renderer)
+        self.assertIn("for(u32 pass = 0; pass < 2; pass++)", renderer)
+        framebuffers = (ROOT / "src/port/psx/gfx_framebuffers_psx.c").read_text()
+        self.assertIn("assert(packet_size <= 16);", framebuffers)
 
     def test_two_sided_billboards_survive_nclip(self):
         jit = (ROOT / "src/port/gfx/gfx_rsp_jit.c").read_text()
