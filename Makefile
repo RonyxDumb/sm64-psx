@@ -65,6 +65,10 @@ ifeq ($(SERIAL),1)
 	DEFINES += SERIAL=1
 endif
 
+ifeq ($(PROFILE),1)
+	DEFINES += PSX_PROFILE=1
+endif
+
 ifeq ($(BENCH),1)
 	DEFINES += BENCH=1
 	BIG_RAM := 1

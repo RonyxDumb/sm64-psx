@@ -1,3 +1,4 @@
+#include "psx_profile.h"
 #include <PR/ultratypes.h>
 
 #include "prevent_bss_reordering.h"
@@ -289,7 +290,9 @@ void change_area(s32 index) {
 
 void area_update_objects(void) {
     gAreaUpdateCounter++;
+    PROF_BEGIN(objects);
     update_objects(0);
+    PROF_END(objects, PROF_OBJECTS);
 }
 
 /*
@@ -361,7 +364,9 @@ void play_transition_after_delay(s16 transType, s16 time, u8 red, u8 green, u8 b
 
 void render_game(void) {
     if (gCurrentArea != NULL && !gWarpTransition.pauseRendering) {
+        PROF_BEGIN(geo);
         geo_process_root(gCurrentArea->unk04, D_8032CE74, D_8032CE78, gFBSetColor);
+        PROF_END(geo, PROF_GEO);
         render_hud();
 
         render_text_labels();

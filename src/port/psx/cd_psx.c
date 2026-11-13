@@ -1,3 +1,4 @@
+#include "psx_profile.h"
 #include <port/cd.h>
 #include <string.h>
 #include <stdbool.h>
@@ -315,6 +316,7 @@ void cd_read(void* out, u32 pos, u32 size) {
 #else
 
 void cd_read(void* out, u32 pos, u32 size) {
+	PROF_BEGIN(cd);
 	if(cd_inited) {
 		gfx_show_message_screen("caricamento", "", "");
 	} else {
@@ -367,6 +369,7 @@ void cd_read(void* out, u32 pos, u32 size) {
 		psx_cd_do_read(excess, sector + sector_count, 1, NULL);
 		memcpy(out + sector_count * SECTOR_SIZE, excess, excess_size);
 	}
+	PROF_END(cd, PROF_CD);
 }
 
 #endif

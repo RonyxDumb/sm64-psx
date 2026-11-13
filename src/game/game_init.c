@@ -1,3 +1,4 @@
+#include "psx_profile.h"
 #include <ultra64.h>
 
 #include "sm64.h"
@@ -78,7 +79,9 @@ struct DemoInput gRecordedDemoInput = { 0 };
  */
 void display_and_vsync(void) {
     profiler_log_thread5_time(BEFORE_DISPLAY_LISTS);
+    PROF_BEGIN(dl);
     gfx_flush_global_dl();
+    PROF_END(dl, PROF_DL);
     profiler_log_thread5_time(AFTER_DISPLAY_LISTS);
     gfx_end_frame(true);
     profiler_log_thread5_time(THREAD5_END);
@@ -358,11 +361,27 @@ extern void* main_pool_start_addr;
 extern void* main_pool_end_addr;
 extern bool compilation_happened_this_frame;
 
+#ifdef PSX_PROFILE
+PsxProfile psx_prof;
+#endif
+
 void game_loop_one_iteration(void) {
+#ifdef PSX_PROFILE
+	static u16 last_frame_start;
+	u16 frame_start = psx_prof_now();
+	if(psx_prof.frames++) {
+		u16 frame = (u16) (frame_start - last_frame_start);
+		psx_prof.ticks[PROF_FRAME] += frame;
+		if(frame > psx_prof.max_frame_ticks) psx_prof.max_frame_ticks = frame;
+	}
+	last_frame_start = frame_start;
+#endif
 	profiler_log_thread5_time(THREAD5_START);
 
 #ifndef NO_AUDIO
+	PROF_BEGIN(audio);
 	audio_game_loop_tick();
+	PROF_END(audio, PROF_AUDIO);
 #endif
 	read_controller_inputs();
 	levelCommandAddr = level_script_execute(levelCommandAddr);

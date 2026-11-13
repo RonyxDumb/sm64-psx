@@ -70,6 +70,9 @@ static void geo_append_display_list(Gfx* display_list, UNUSED s16 layer) {
 
 // the entry point: process the root of the graph
 void geo_process_root(struct GraphNodeRoot* node, UNUSED Vp* b, UNUSED Vp* c, UNUSED s32 clearColor) {
+#ifdef TARGET_PSX
+    gfx_frame_begin(); // backgrounds emit GPU packets during traversal
+#endif
 	if(node->node.flags & GRAPH_RENDER_ACTIVE) {
 		// prep work for a frame
 		//geo_using_zbuffer = false;

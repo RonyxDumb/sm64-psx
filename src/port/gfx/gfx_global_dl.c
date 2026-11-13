@@ -26,6 +26,9 @@ void gfx_init_global_dl() {
 }
 
 void gfx_flush_global_dl() {
+#ifdef TARGET_PSX
+	gfx_frame_begin();
+#endif
 	if(global_dl != GLOBAL_DL_BUFFER_START) {
 		*(global_dl++) = DL_PACK_OP(DL_CMD_END);
 		gfx_init_global_dl();

@@ -1,4 +1,5 @@
 #include "macros.h"
+#include "psx_profile.h"
 #include "types.h"
 #include <assert.h>
 #include <port/gfx/gfx.h>
@@ -188,6 +189,8 @@ static u32 texture_window_period(u32 size) {
 }
 
 DL_EXEC_ICACHE_FUNC static void emit_poly_packet(bool quad, s32 sxy3, u32 flags, const GfxVtx* vertices, u32 depth) {
+	PROF_COUNT(PROF_N_PACKETS);
+	PROF_BEGIN(emit);
 	GfxVtx normalized[4];
 	if(!native_uv && tex_ptr && (flags & PRIM_FLAG_TEXTURED)) {
 		vertices = normalize_legacy_uvs(normalized, vertices, quad ? 4 : 3, (const TexHeader*) tex_ptr);
@@ -199,11 +202,13 @@ DL_EXEC_ICACHE_FUNC static void emit_poly_packet(bool quad, s32 sxy3, u32 flags,
 	bool ui = is_ortho && !is_2d_background;
 	if((flags & PRIM_FLAG_TEXTURED) && (flags & PRIM_FLAG_DECAL)) {
 		emit_decal_nodes(quad, sxy3, flags, vertices, ot_z, ui);
+		PROF_END(emit, PROF_EMIT);
 		return;
 	}
 	Packet packet = gfx_packet_begin_for(ui);
 	append_poly(&packet, quad, sxy3, flags, vertices);
 	gfx_packet_end(packet, ot_z);
+	PROF_END(emit, PROF_EMIT);
 }
 
 typedef struct {
@@ -224,14 +229,21 @@ enum { CLIP_NEAR, CLIP_FAR, CLIP_LEFT, CLIP_RIGHT, CLIP_TOP, CLIP_BOTTOM, CLIP_P
 // Keep this workspace off the small scratchpad stack.
 static ClipVertex clip_vertices[2][3 + CLIP_PLANE_COUNT];
 
+/* Side planes form a guard band instead of the screen edges: the GPU already
+ * clips rasterization to the drawing area, so cutting at the exact edges only
+ * cost CPU time. The band keeps clipped polygons inside the GPU primitive
+ * limits (width <= 1023, height <= 511 pixels). */
+#define CLIP_GUARD_X 340 // x in [-340, 660)
+#define CLIP_GUARD_Y 130 // y in [-130, 370)
+
 static s64 clip_distance(const ClipVertex* vertex, u32 plane, s32 focal, s32 near_z) {
 	switch(plane) {
 		case CLIP_NEAR: return vertex->z - near_z;
 		case CLIP_FAR: return (MAX_Z - 1) - vertex->z;
-		case CLIP_LEFT: return (s64) vertex->x * focal + (s64) vertex->z * (XRES / 2);
-		case CLIP_RIGHT: return -(s64) vertex->x * focal + (s64) vertex->z * (XRES / 2);
-		case CLIP_TOP: return (s64) vertex->y * focal + (s64) vertex->z * (YRES / 2);
-		default: return -(s64) vertex->y * focal + (s64) vertex->z * (YRES / 2);
+		case CLIP_LEFT: return (s64) vertex->x * focal + (s64) vertex->z * (XRES / 2 + CLIP_GUARD_X);
+		case CLIP_RIGHT: return -(s64) vertex->x * focal + (s64) vertex->z * (XRES / 2 + CLIP_GUARD_X);
+		case CLIP_TOP: return (s64) vertex->y * focal + (s64) vertex->z * (YRES / 2 + CLIP_GUARD_Y);
+		default: return -(s64) vertex->y * focal + (s64) vertex->z * (YRES / 2 + CLIP_GUARD_Y);
 	}
 }
 
@@ -251,7 +263,17 @@ static u8 clip_lerp_uv(u8 a, u8 b, s32 fraction) {
 static ClipVertex clip_intersection(const ClipVertex* outside, const ClipVertex* inside,
                                    s64 outside_distance, s64 inside_distance) {
 	// Interpolate from the same end of a shared edge in both triangles.
-	s32 fraction = (-outside_distance * 65536) / (inside_distance - outside_distance);
+	// 0.16 fraction = -out / (in - out). The R3000 has no 64-bit divide and
+	// __divdi3 cost hundreds of cycles per call (the clipper averaged ~6000
+	// cycles per polygon). Scale both terms down to 15 bits, then use the
+	// 32-bit DIVU: deterministic, so neighbours still get identical points.
+	u64 num = (u64) -outside_distance;
+	u64 den = (u64) (inside_distance - outside_distance);
+	while(den > 0x7FFF) {
+		num >>= 1;
+		den >>= 1;
+	}
+	s32 fraction = den ? (s32) (((u32) num << 16) / (u32) den) : 0;
 	return (ClipVertex) {
 		.x = clip_lerp(outside->x, inside->x, fraction),
 		.y = clip_lerp(outside->y, inside->y, fraction),
@@ -288,10 +310,17 @@ static ClipVertex clip_load_vertex(const GfxVtx* position, const GfxVtx* materia
 	};
 }
 
-static s32 clip_project(s32 coord, s32 z, s32 focal, s32 half_size) {
-	s32 screen = half_size + (s64) coord * focal / z;
-	if(screen < 0) return 0;
-	if(screen > half_size * 2) return half_size * 2;
+static s32 clip_project(s32 coord, s32 z, s32 focal, s32 half_size, s32 guard) {
+	s32 screen;
+	if(coord > -(1 << 21) && coord < (1 << 21)) {
+		// |coord * focal| < 2^31 for focal < 1024: use the 32-bit divider.
+		screen = half_size + coord * focal / z;
+	} else {
+		screen = half_size + (s64) coord * focal / z;
+	}
+	// Rounding can push a point on a guard plane one pixel past it.
+	if(screen < -guard) return -guard;
+	if(screen > half_size * 2 + guard) return half_size * 2 + guard;
 	return screen;
 }
 
@@ -306,7 +335,20 @@ static s32 clip_project(s32 coord, s32 z, s32 focal, s32 half_size) {
 	u32 count = 3;
 	s32 near_z = focal / 2 + 1;
 
+	// Only planes that some corner lies outside of can cut the triangle:
+	// intersection points of other planes' edges stay inside the rest.
+	u32 crossed = 0;
 	for(u32 plane = 0; plane < CLIP_PLANE_COUNT; plane++) {
+		for(u32 i = 0; i < 3; i++) {
+			if(clip_distance(&input[i], plane, focal, near_z) < 0) {
+				crossed |= 1 << plane;
+				break;
+			}
+		}
+	}
+
+	for(u32 plane = 0; plane < CLIP_PLANE_COUNT; plane++) {
+		if(!(crossed & (1 << plane))) continue;
 		u32 written = 0;
 		const ClipVertex* prev = &input[count - 1];
 		s64 prev_distance = clip_distance(prev, plane, focal, near_z);
@@ -337,8 +379,8 @@ static s32 clip_project(s32 coord, s32 z, s32 focal, s32 half_size) {
 			continue;
 		}
 		s32 z = input[i].z < near_z ? near_z : input[i].z;
-		xy[i] = gp0_xy(clip_project(input[i].x, z, focal, XRES / 2),
-		               clip_project(input[i].y, z, focal, YRES / 2));
+		xy[i] = gp0_xy(clip_project(input[i].x, z, focal, XRES / 2, CLIP_GUARD_X),
+		               clip_project(input[i].y, z, focal, YRES / 2, CLIP_GUARD_Y));
 	}
 	for(u32 i = 1; i + 1 < count; i++) {
 		gte_setDataReg(GTE_SXY0, xy[0]);
@@ -523,6 +565,7 @@ static const u8 edge_split_tri_count[8] = {0, 2, 2, 3, 2, 3, 3, 4};
 
 // Quads (rare in level meshes) keep whole-polygon subdivision.
 [[gnu::noinline]] static bool tessellate_near(bool quad, u32 flags, GfxVtx* storage, u32 level) {
+	PROF_COUNT(PROF_N_TESSELLATED); // counts attempts; split ones re-enter draw_poly
 	if(!quad) return tessellate_triangle_edges(flags, storage, level);
 	if(!(flags & PRIM_FLAG_TESSELLATE)) return false;
 	tessellate_poly(true, flags, storage, level);
@@ -580,6 +623,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		gte_flags = 0;
 		sxy3 = project_ortho(v3, storage);
 		debug_processed_poly_count++;
+		PROF_COUNT(PROF_N_POLYS);
 	} else {
 		// RTPT transforms and projects all 3 vertices in a mere 23 cycles. based GTE :)
 		gte_commandNoNop(GTE_CMD_RTPT | GTE_SF);
@@ -589,6 +633,7 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 		gte_storeDataRegM(GTE_VXY2, (u32*) &storage[2].xy);
 
 		debug_processed_poly_count++;
+		PROF_COUNT(PROF_N_POLYS);
 		is_2d_background = false;
 
 		// if there was any error in rtpt, cull it
@@ -727,10 +772,13 @@ DL_EXEC_ICACHE_FUNC static void draw_poly(const GfxVtx* v0, const GfxVtx* v1, co
 
 	if(!is_ortho && (gte_flags || depth_straddles_clip)) {
 		s32 focal = gte_getControlReg(GTE_H) & 0xFFFF;
+		PROF_COUNT(PROF_N_CLIPPED);
+		PROF_BEGIN(clip);
 		clip_and_draw_triangle(v0, v1, v2, &storage[0], &storage[1], &storage[2], flags, focal);
 		if(v3) {
 			clip_and_draw_triangle(v1, v3, v2, &storage[1], &storage[3], &storage[2], flags, focal);
 		}
+		PROF_END(clip, PROF_CLIP);
 		return;
 	}
 

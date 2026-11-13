@@ -1,3 +1,4 @@
+#include "psx_profile.h"
 #include <assert.h>
 #include <port/gfx/gfx_internal.h>
 #include <ps1/gpu.h>
@@ -23,11 +24,13 @@ STATIC_ASSERT(PACKET_POOL_LEN > PACKET_RESERVE_WORDS + PACKET_HUD_RESERVE_WORDS,
 scratchpad static u32* next_packet;
 static u32* ui_tail;
 
+static bool frame_open = false;  // CPU owns the OT/arena for a frame being built
+static bool frame_in_flight = false;
+
 void gfx_init_buffers() {
-	startOrderingTableClear(ot, OT_LEN);
-	awaitOrderingTableClear();
 	selected_fb = 0;
-	next_packet = packet_pool;
+	frame_open = false;
+	frame_in_flight = false;
 
 	for(u32 buffer = 0; buffer < 2; buffer++) {
 		u32 x = buffer * XRES;
@@ -46,58 +49,79 @@ void gfx_init_buffers() {
 static OSTime last_frame_time_us = 0;
 void audio_backend_vblank(void);
 
+/* CPU/GPU overlap. A submitted frame is drawn by the GPU while the CPU runs
+ * the next frame's game logic; the shared OT and packet arena are reclaimed
+ * only when the next frame starts producing packets (geo traversal or DL
+ * flush). The frame shown at a 30 Hz swap is therefore the previous one,
+ * which is complete by then: one frame of display latency, like the N64. */
+
+static void wait_for_gpu_frame(void) {
+	if(!frame_in_flight) return;
+	PROF_BEGIN(gpu);
+	waitForDMADone();
+	waitForGP0Ready(); // GP0 idle: the last primitives have been drawn
+	PROF_END(gpu, PROF_GPU_WAIT);
+	frame_in_flight = false;
+}
+
+void gfx_frame_begin(void) {
+	if(frame_open) return;
+	wait_for_gpu_frame();
+	startOrderingTableClear(ot, OT_LEN);
+	next_packet = packet_pool;
+	ui_tail = NULL;
+	awaitOrderingTableClear();
+	frame_open = true;
+}
+
+static void wait_for_30hz_vblank(void) {
+	/* Never switch the displayed PS1 framebuffer in the middle of a
+	 * scanout. Acknowledge any stale VSync IRQ, then wait for at least one
+	 * new vertical blank; use a second only if the 30 Hz target is early. */
+	PROF_BEGIN(vsync);
+	IRQ_STAT = ~(1 << IRQ_VSYNC);
+	do {
+		waitForVSync();
+		audio_backend_vblank();
+	} while(last_frame_time_us != 0 && osGetTime() - last_frame_time_us < 1000000 / 30);
+	last_frame_time_us = osGetTime();
+	PROF_END(vsync, PROF_VSYNC);
+}
+
 void gfx_swap_buffers(bool vsync_30fps) {
+	gfx_frame_begin(); // an empty frame still needs a valid OT
 	u32* start = frame_start_packet[selected_fb];
 	u32 prev_ot_entry = ot[OT_LEN - 1];
 	ot[OT_LEN - 1] = gp0_tag(0, start);
 	start[0] = gp0_tag(7, (void*) prev_ot_entry);
 
-	sendLinkedList(&ot[OT_LEN - 1]);
-	// The two VRAM framebuffers share one RAM command arena. Keep the
-	// arena intact until DMA has consumed it, then clear it for the next frame.
-	waitForDMADone();
-	waitForGP0Ready();
-	startOrderingTableClear(ot, OT_LEN);
-	next_packet = packet_pool;
-	ui_tail = NULL;
-
-	selected_fb ^= 1;
-
 	if(vsync_30fps) {
-		/* Never switch the displayed PS1 framebuffer in the middle of a
-		 * scanout. A late frame used to skip the time-based VSync loop
-		 * completely, which could tear the HUD and static geometry.
-		 * Acknowledge any stale VSync IRQ, then wait for at least one new
-		 * vertical blank; use a second only if the 30 Hz target is early. */
-		IRQ_STAT = ~(1 << IRQ_VSYNC);
-		do {
-			waitForVSync();
-			audio_backend_vblank();
-		} while(last_frame_time_us != 0 && osGetTime() - last_frame_time_us < 1000000 / 30);
-		last_frame_time_us = osGetTime();
-	}
-
-	/* selected_fb now points to the next draw buffer. Present the
-	 * previously submitted one at VBlank (or immediately for loader UI). */
-	/* selected_fb is now the NEXT draw target. Scan out the completed
-	 * buffer, not the one about to be cleared and rendered into. Showing
-	 * the draw target caused partial frames, flicker and visible tearing. */
-	GPU_GP1 = gp1_fbOffset(selected_fb ? 0 : XRES, 0);
-	if(vsync_30fps) {
+		// The previous frame (other buffer) was completed when this one
+		// reclaimed the arena: present it, then let the GPU draw this one
+		// in the background.
+		wait_for_gpu_frame();
+		wait_for_30hz_vblank();
+		GPU_GP1 = gp1_fbOffset(selected_fb ? 0 : XRES, 0);
 		GPU_GP1 = gp1_dispBlank(false);
+		sendLinkedList(&ot[OT_LEN - 1]);
+		frame_in_flight = true;
+	} else {
+		// Loading/message screens: show this frame as soon as it is drawn.
+		sendLinkedList(&ot[OT_LEN - 1]);
+		frame_in_flight = true;
+		wait_for_gpu_frame();
+		GPU_GP1 = gp1_fbOffset(selected_fb ? XRES : 0, 0);
 	}
-
-	awaitOrderingTableClear();
+	frame_open = false;
+	selected_fb ^= 1;
 }
 
 void gfx_discard_frame() {
-	startOrderingTableClear(ot, OT_LEN);
-	next_packet = packet_pool;
-	ui_tail = NULL;
+	frame_open = false;
+	gfx_frame_begin();
 	gfx_init_global_dl();
 	gfx_reset_rsp_jit();
 	gfx_reset_dl_exec();
-	awaitOrderingTableClear();
 }
 
 ALWAYS_INLINE static Packet gfx_packet_begin_with_reserve(u32 reserve) {

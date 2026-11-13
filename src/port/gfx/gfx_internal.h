@@ -48,6 +48,9 @@ typedef struct {
 Packet gfx_packet_begin();
 Packet gfx_packet_begin_ui();
 Packet gfx_packet_begin_for(bool ui);
+// Claim the OT and packet arena for a new frame (waits for the GPU to finish
+// the previous one). Idempotent within a frame.
+void gfx_frame_begin(void);
 
 ALWAYS_INLINE u32* gfx_packet_skip(Packet* packet) {
 	return packet->end++;
