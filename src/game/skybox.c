@@ -427,7 +427,8 @@ Gfx *init_skybox_display_list(s8 player, s8 background, s8 colorIndex) {
             }
             TexHeader *texture = psx_skybox_get_texture(tileIndex);
             if (texture != NULL) {
-                gfx_draw_background_tile(texture, x0, y0, SKYBOX_TILE_WIDTH, SKYBOX_TILE_HEIGHT, rgb);
+                gfx_draw_background_tile_uv(texture, x0, y0, SKYBOX_TILE_WIDTH, SKYBOX_TILE_HEIGHT, rgb,
+                                            texture->width - 1, texture->height - 1);
             }
         }
     }

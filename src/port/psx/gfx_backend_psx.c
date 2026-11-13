@@ -60,7 +60,12 @@ void gfx_draw_background_color(u16 color) {
 	gfx_packet_end(packet, BACKGROUND_Z + 1);
 }
 
-void gfx_draw_background_tile(TexHeader* tex, s16 x, s16 y, s16 width, s16 height, u32 rgb) {
+/* Draw one textured screen-space quad. u_max/v_max is the texel coordinate
+ * reached at the right/bottom edge: the full size for tiling backgrounds, or
+ * size - 1 for the skybox, whose N64 tiles share their last texel with the
+ * neighbouring tile (make_skybox_rect maps 0..31). Mapping 0..32 there let the
+ * edge pixels wrap to texel 0 of the same tile and drew a 1-pixel seam grid. */
+void gfx_draw_background_tile_uv(TexHeader* tex, s16 x, s16 y, s16 width, s16 height, u32 rgb, u8 u_max, u8 v_max) {
 	gfx_load_texture(tex);
 	Packet packet = gfx_packet_begin();
 	gfx_packet_append(&packet, tex->window_cmd);
@@ -68,10 +73,14 @@ void gfx_draw_background_tile(TexHeader* tex, s16 x, s16 y, s16 width, s16 heigh
 	gfx_packet_append(&packet, gp0_xy(x, y));
 	gfx_packet_append(&packet, gp0_uv(0, 0, tex->clut_attr));
 	gfx_packet_append(&packet, gp0_xy(x + width, y));
-	gfx_packet_append(&packet, gp0_uv(tex->width, 0, tex->page_attr));
+	gfx_packet_append(&packet, gp0_uv(u_max, 0, tex->page_attr));
 	gfx_packet_append(&packet, gp0_xy(x, y + height));
-	gfx_packet_append(&packet, gp0_uv(0, tex->height, 0));
+	gfx_packet_append(&packet, gp0_uv(0, v_max, 0));
 	gfx_packet_append(&packet, gp0_xy(x + width, y + height));
-	gfx_packet_append(&packet, gp0_uv(tex->width, tex->height, 0));
+	gfx_packet_append(&packet, gp0_uv(u_max, v_max, 0));
 	gfx_packet_end(packet, BACKGROUND_Z);
+}
+
+void gfx_draw_background_tile(TexHeader* tex, s16 x, s16 y, s16 width, s16 height, u32 rgb) {
+	gfx_draw_background_tile_uv(tex, x, y, width, height, rgb, tex->width, tex->height);
 }

@@ -36,6 +36,7 @@ void gfx_discard_frame();
 #ifdef TARGET_PSX
 void gfx_draw_background_color(u16 color);
 void gfx_draw_background_tile(TexHeader* tex, s16 x, s16 y, s16 width, s16 height, u32 rgb);
+void gfx_draw_background_tile_uv(TexHeader* tex, s16 x, s16 y, s16 width, s16 height, u32 rgb, u8 u_max, u8 v_max);
 #endif
 
 typedef struct {
