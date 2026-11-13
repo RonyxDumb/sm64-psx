@@ -141,6 +141,40 @@ static int max3(int x, int y, int z) {
 				ensure_vertices_converted(vtx_list, count);
 				compilation_vertices = vtx_list;
 				*(out++) = DL_PACK_OP(DL_CMD_VTX) | DL_PACK_PTR(vtx_list->psx);
+#ifdef TARGET_PSX
+				// The G_VTX command is two words, so the in-place output has
+				// room for a culling word after DL_CMD_VTX.
+				if(count >= 3) {
+					CullSphere* sphere = (CullSphere*) ((u8*) vtx_list + count * sizeof(Vtx) - sizeof(CullSphere));
+					s32 lo[3] = {32767, 32767, 32767}, hi[3] = {-32768, -32768, -32768};
+					for(u32 i = 0; i < count; i++) {
+						const GfxVtx* v = &vtx_list->psx[i];
+						s32 p[3] = {v->x, v->y, v->z};
+						for(u32 k = 0; k < 3; k++) {
+							if(p[k] < lo[k]) lo[k] = p[k];
+							if(p[k] > hi[k]) hi[k] = p[k];
+						}
+					}
+					s32 c[3] = {(lo[0] + hi[0]) >> 1, (lo[1] + hi[1]) >> 1, (lo[2] + hi[2]) >> 1};
+					u32 r2 = 0;
+					for(u32 i = 0; i < count; i++) {
+						const GfxVtx* v = &vtx_list->psx[i];
+						s32 sx = v->x - c[0], sy = v->y - c[1], sz = v->z - c[2];
+						u32 dx = (u32) (sx < 0 ? -sx : sx), dy = (u32) (sy < 0 ? -sy : sy), dz = (u32) (sz < 0 ? -sz : sz);
+						if(dx > 30000 || dy > 30000 || dz > 30000) {
+							r2 = 0xFFFFFFFF; // too large to cull usefully
+							break;
+						}
+						u32 d2 = dx * dx + dy * dy + dz * dz;
+						if(d2 > r2) r2 = d2;
+					}
+					u32 r = r2 == 0xFFFFFFFF ? 0xFFFF : sqrtu(r2) + 1u;
+					if(r < 0xFFFF && (u8*) sphere >= (u8*) &vtx_list->psx[count]) {
+						*sphere = (CullSphere) {c[0], c[1], c[2], r};
+						*(out++) = DL_PACK_OP(DL_CMD_CULL_SPHERE) | DL_PACK_PTR(sphere);
+					}
+				}
+#endif
 				break;
 			}
 			case (u8) G_TRI1: {

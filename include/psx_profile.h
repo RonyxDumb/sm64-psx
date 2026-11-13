@@ -29,7 +29,8 @@ enum {
 	PROF_N_PACKETS,    // GPU polygon packets emitted
 	PROF_N_CLIPPED,    // polygons sent through the frustum clipper
 	PROF_N_TESSELLATED,// polygons split by near-camera tessellation
-	PROF_N_CULLED,     // polygons rejected (backface / offscreen)
+	PROF_N_CULLED,     // vertex groups rejected by the sphere test
+	PROF_N_CULL_TESTS, // vertex-group sphere tests
 	PROF_N_COUNT
 };
 
